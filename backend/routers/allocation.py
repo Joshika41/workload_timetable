@@ -1,0 +1,356 @@
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from pydantic import BaseModel
+from typing import List
+import models
+from models import AuditLog
+from database import SessionLocal
+from models import CohortSyllabusMapping, WorkloadAllocation, Syllabus, Cohort, RoleTypeEnum, ProgramTypeEnum, SemesterTypeEnum, Faculty
+from routers.auth import verify_admin_role
+import io
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet
+
+router = APIRouter()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+class CurriculumMapRequest(BaseModel):
+    cohort_id: str
+    subject_codes: List[str]
+
+@router.post("/api/admin/map-curriculum")
+def map_curriculum(
+    payload: CurriculumMapRequest,
+    db: Session = Depends(get_db), 
+    current_user: models.User = Depends(verify_admin_role)
+):
+    try:
+        with db.begin_nested():
+            # Delete existing mappings for this cohort
+            db.query(CohortSyllabusMapping).filter_by(cohort_id=payload.cohort_id).delete()
+            
+            # Insert new mappings
+            mappings = []
+            for code in payload.subject_codes:
+                m = CohortSyllabusMapping(
+                    cohort_id=payload.cohort_id,
+                    subject_code=code
+                )
+                mappings.append(m)
+            db.add_all(mappings)
+            
+        db.commit()
+        return {"message": "Curriculum mapped successfully."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class AllocationSplit(BaseModel):
+    faculty_id: str
+    role_type: str
+    theory_hours: int
+    lab_hours: int
+
+class AssignmentRequest(BaseModel):
+    cohort_id: str
+    subject_code: str
+    allocations: List[AllocationSplit]
+
+@router.post("/api/admin/allocations/assign")
+def assign_allocation(
+    payload: AssignmentRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(verify_admin_role)
+):
+    try:
+        with db.begin_nested():
+            # Get syllabus limits with row-level lock for concurrency safety
+            syllabus = db.query(Syllabus).filter_by(subject_code=payload.subject_code).with_for_update().first()
+            if not syllabus:
+                raise HTTPException(status_code=400, detail="Subject not found.")
+                
+            total_theory_req = syllabus.theory_hours_l or 0
+            total_lab_req = syllabus.practical_hours_p or 0
+            
+            # Calculate new sums
+            sum_theory = sum(a.theory_hours for a in payload.allocations)
+            sum_lab = sum(a.lab_hours for a in payload.allocations)
+            
+            if sum_theory > total_theory_req:
+                raise HTTPException(status_code=400, detail=f"Allocated theory hours ({sum_theory}) exceed syllabus limit ({total_theory_req}).")
+            if sum_lab > total_lab_req:
+                raise HTTPException(status_code=400, detail=f"Allocated lab hours ({sum_lab}) exceed syllabus limit ({total_lab_req}).")
+                
+            # Clear old allocations for this cohort+subject
+            old_allocs = db.query(WorkloadAllocation).filter_by(
+                cohort_id=payload.cohort_id, 
+                subject_code=payload.subject_code
+            ).all()
+            old_data = [{"faculty_id": a.faculty_id, "theory": a.allocated_theory_hours, "lab": a.allocated_lab_hours} for a in old_allocs]
+            
+            db.query(WorkloadAllocation).filter_by(
+                cohort_id=payload.cohort_id, 
+                subject_code=payload.subject_code
+            ).delete()
+            
+            # Insert new ones
+            new_data = []
+            for alloc in payload.allocations:
+                wa = WorkloadAllocation(
+                    faculty_id=alloc.faculty_id,
+                    subject_code=payload.subject_code,
+                    cohort_id=payload.cohort_id,
+                    role_type=RoleTypeEnum(alloc.role_type.upper() if alloc.role_type.upper() == 'MAIN' else 'IN-2'),
+                    allocated_theory_hours=alloc.theory_hours,
+                    allocated_lab_hours=alloc.lab_hours
+                )
+                db.add(wa)
+                new_data.append({"faculty_id": alloc.faculty_id, "theory": alloc.theory_hours, "lab": alloc.lab_hours})
+                
+            # Log action
+            audit = AuditLog(
+                user_id=current_user.id,
+                action_type="RE_ALLOCATE_SUBJECT",
+                target_entity=f"{payload.subject_code}:{payload.cohort_id}",
+                previous_value=old_data,
+                new_value=new_data
+            )
+            db.add(audit)
+                
+        db.commit()
+        return {"message": "Allocations assigned successfully."}
+        
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/api/admin/verify-allocations")
+def verify_allocations(
+    program_type: str,
+    semester_type: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(verify_admin_role)
+):
+    prog = ProgramTypeEnum(program_type.upper())
+    sem = SemesterTypeEnum(semester_type.upper())
+    
+    # Get all active cohorts in this workspace
+    cohorts = db.query(Cohort).filter_by(program_type=prog, semester_type=sem).all()
+    cohort_ids = [c.id for c in cohorts]
+    
+    # Get mappings
+    mappings = db.query(CohortSyllabusMapping).filter(CohortSyllabusMapping.cohort_id.in_(cohort_ids)).all()
+    
+    is_ready = True
+    issues = []
+    
+    for m in mappings:
+        syllabus = db.query(Syllabus).filter_by(subject_code=m.subject_code).first()
+        if not syllabus:
+            continue
+            
+        req_theory = syllabus.theory_hours_l or 0
+        req_lab = syllabus.practical_hours_p or 0
+        
+        # Sum allocated
+        allocs = db.query(WorkloadAllocation).filter_by(cohort_id=m.cohort_id, subject_code=m.subject_code).all()
+        alloc_theory = sum(a.allocated_theory_hours for a in allocs)
+        alloc_lab = sum(a.allocated_lab_hours for a in allocs)
+        
+        if alloc_theory != req_theory or alloc_lab != req_lab:
+            is_ready = False
+            issues.append({
+                "cohort_id": m.cohort_id,
+                "subject_code": m.subject_code,
+                "theory_discrepancy": req_theory - alloc_theory,
+                "lab_discrepancy": req_lab - alloc_lab
+            })
+            
+    return {"is_ready": is_ready, "issues": issues}
+
+
+@router.get("/api/admin/export-workload")
+def export_workload(
+    program_type: str,
+    semester_type: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(verify_admin_role)
+):
+    prog = ProgramTypeEnum(program_type.upper())
+    sem = SemesterTypeEnum(semester_type.upper())
+    
+    # Get allocations for the workspace
+    # We join with Cohort to filter by workspace
+    allocations = db.query(WorkloadAllocation, Cohort, Syllabus, Faculty).join(
+        Cohort, WorkloadAllocation.cohort_id == Cohort.id
+    ).join(
+        Syllabus, WorkloadAllocation.subject_code == Syllabus.subject_code
+    ).join(
+        Faculty, WorkloadAllocation.faculty_id == Faculty.faculty_id
+    ).filter(
+        Cohort.program_type == prog,
+        Cohort.semester_type == sem
+    ).all()
+    
+    # Group by faculty_id
+    faculty_groups = {}
+    for alloc, cohort, syllabus, faculty in allocations:
+        fid = faculty.faculty_id
+        if fid not in faculty_groups:
+            faculty_groups[fid] = {
+                "name_formatted": f"{faculty.name} ({faculty.designation or 'Faculty'})",
+                "rows": [],
+                "total_theory": 0,
+                "total_lab": 0
+            }
+        
+        c_title = syllabus.course_title
+        if alloc.role_type == RoleTypeEnum.IN2:
+            c_title = f"{c_title} [Lab - IN2]"
+            
+        faculty_groups[fid]["rows"].append([
+            c_title,
+            syllabus.subject_code,
+            f"{cohort.class_name} - {cohort.section}",
+            str(alloc.allocated_theory_hours),
+            str(alloc.allocated_lab_hours)
+        ])
+        faculty_groups[fid]["total_theory"] += alloc.allocated_theory_hours
+        faculty_groups[fid]["total_lab"] += alloc.allocated_lab_hours
+        
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter)
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    elements.append(Paragraph(f"Workload Allocation - {program_type.upper()} {semester_type.upper()}", styles['Title']))
+    elements.append(Spacer(1, 12))
+    
+    for fid, group in faculty_groups.items():
+        elements.append(Paragraph(group["name_formatted"], styles['Heading2']))
+        
+        data = [['Course Name', 'Code', 'Class/Sec', 'Theory Hrs', 'Lab Hrs']]
+        data.extend(group["rows"])
+        data.append(['Total', '', '', str(group["total_theory"]), str(group["total_lab"])])
+        
+        t = Table(data, repeatRows=1, style=[
+            ('BACKGROUND', (0,0), (-1,0), colors.grey),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0,0), (-1,0), 12),
+            ('BACKGROUND', (0,-1), (-1,-1), colors.lightgrey),
+            ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+            ('GRID', (0,0), (-1,-1), 1, colors.black)
+        ])
+        elements.append(t)
+        elements.append(Spacer(1, 24))
+        
+    doc.build(elements)
+    
+    buffer.seek(0)
+    return StreamingResponse(buffer, media_type="application/pdf", headers={
+        "Content-Disposition": f"attachment; filename=workload_export_{program_type}_{semester_type}.pdf"
+    })
+
+@router.post("/api/admin/allocations/wipe")
+def wipe_allocations(
+    department_id: int,
+    program_type: str,
+    semester_type: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(verify_admin_role)
+):
+    # Soft delete all workload allocations for the matching criteria
+    prog = ProgramTypeEnum(program_type.upper())
+    sem = SemesterTypeEnum(semester_type.upper())
+    
+    # We find cohorts in this department/program/sem and clear allocations
+    cohorts = db.query(models.Cohort).filter_by(
+        department_id=department_id, 
+        program_type=prog, 
+        semester_type=sem
+    ).all()
+    
+    cohort_ids = [c.id for c in cohorts]
+    if not cohort_ids:
+        return {"message": "No allocations found for this filter."}
+        
+    db.query(models.WorkloadAllocation).filter(
+        models.WorkloadAllocation.cohort_id.in_(cohort_ids)
+    ).update({"is_active": False}, synchronize_session=False)
+    
+    # Audit log
+    audit = models.AuditLog(
+        user_id=current_user.id,
+        action_type="WIPE_SLATE",
+        target_entity=f"Dept:{department_id}|{program_type}|{semester_type}",
+        previous_value={"cohorts_affected": len(cohort_ids)},
+        new_value={"is_active": False}
+    )
+    db.add(audit)
+    db.commit()
+    return {"message": "Matrix allocations successfully wiped for this scope."}
+
+@router.post("/api/admin/allocations/lock")
+def toggle_allocation_lock(
+    department_id: int,
+    is_locked: bool,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(verify_admin_role)
+):
+    dept = db.query(models.Department).filter_by(id=department_id).first()
+    if not dept:
+        raise HTTPException(status_code=404, detail="Department not found")
+        
+    dept.is_allocation_locked = is_locked
+    
+    # Send automated emails if publishing/locking
+    if is_locked:
+        try:
+            import smtplib, os
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            
+            smtp_host = os.environ.get('SMTP_HOST')
+            smtp_user = os.environ.get('SMTP_USER')
+            smtp_pass = os.environ.get('SMTP_PASS')
+            smtp_port = int(os.environ.get('SMTP_PORT', 587))
+            
+            if smtp_host and smtp_user:
+                # Find all faculty with allocations in this department's subjects
+                # Simple version: email all faculty. For a real system, email specific allocations.
+                allocations = db.query(models.WorkloadAllocation, models.Faculty).join(
+                    models.Faculty, models.WorkloadAllocation.faculty_id == models.Faculty.id
+                ).filter(models.WorkloadAllocation.is_active == True).all()
+                
+                emails_sent = set()
+                server = smtplib.SMTP(smtp_host, smtp_port)
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                
+                for a, fac in allocations:
+                    # In real code we'd lookup fac.user.email
+                    pass
+                server.quit()
+        except Exception as e:
+            print("Failed to send SMTP", e)
+            
+    db.commit()
+    return {"message": f"Department allocations {'locked/published' if is_locked else 'unlocked'} successfully."}

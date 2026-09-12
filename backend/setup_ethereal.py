@@ -1,0 +1,10 @@
+﻿import urllib.request, json
+req = urllib.request.Request('https://api.nodemailer.com/user', method='POST')
+req.add_header('Content-Type', 'application/json')
+response = urllib.request.urlopen(req, data=b'{}')
+data = json.loads(response.read())
+print(f'SMTP_HOST=smtp.ethereal.email')
+print(f'SMTP_PORT=587')
+print(f'SMTP_USER={data["user"]}')
+print(f'SMTP_PASS={data["pass"]}')
+print(f'ETHEREAL_URL=https://ethereal.email/messages')

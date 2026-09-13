@@ -60,8 +60,8 @@ function DeanTimetables() {
     
     allBlocks.forEach((block: any) => {
       if (block.section === section) {
-        if (block.day >= 0 && block.day < 5 && block.period >= 0 && block.period < 6) {
-          defaultGrid[block.day][block.period] = {
+        if (block.day >= 0 && block.day < 5 && block.period >= 0 && block.period < 6 && defaultGrid[block.day]) {
+          defaultGrid[block.day]![block.period] = {
             subject: block.subject,
             venue: "",
             faculty: block.faculty_id,

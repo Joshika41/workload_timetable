@@ -1,837 +1,746 @@
-﻿import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect, useMemo } from "react";
-import { PortalShell } from "@/components/PortalShell";
-import { adminNav } from "@/components/portal-nav";
-import { useWorkspace } from "@/context/WorkspaceContext";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { createFileRoute } from '@tanstack/react-router';
+import { useState } from 'react';
+import { WorkloadShell } from '@/components/WorkloadShell';
+import { useWorkloadData } from '@/lib/workload-store';
+import { WorkloadStatusBadge } from '@/components/WorkloadStatusBadge';
+import type { CourseAllocation, ProgrammeType, SemesterType } from '@/lib/workload-types';
+import { exportCourseAllocationToExcel } from '@/lib/excel-export';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { toast } from "sonner";
-import {
-  FileDown,
-  ShieldAlert,
-  Save,
-  RefreshCw,
+  SlidersHorizontal,
+  Search,
   CheckCircle2,
-  AlertTriangle,
+  AlertCircle,
+  Plus,
   Trash2,
-  Lock,
-  Loader2,
-  Calculator,
-} from "lucide-react";
-import api from "@/lib/api";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+  Edit2,
+  FileSpreadsheet,
+  Users,
+  Building,
+  Sparkles,
+  ArrowLeft,
+  Check,
+  AlertTriangle,
+  Layers,
+  FilterX,
+  BookOpen,
+} from 'lucide-react';
+import { toast } from 'sonner';
 
-export const Route = createFileRoute("/admin/allocation")({
-  component: AdminAllocation,
+export const Route = createFileRoute('/admin/allocation')({
+  component: AdminAllocationPage,
 });
 
-interface AllocationRow {
-  id: string;
-  faculty_id: string;
-  faculty_name: string;
-  subject_code: string;
-  cohort_id: string;
-  cohort_name: string;
-  role_type: string;
-  allocated_theory_hours: number;
-  allocated_lab_hours: number;
-  max_theory: number;
-  max_lab: number;
-  has_conflict: boolean;
-  status: string;
-}
+function FacultyInlineSelect({ alloc, type, disabled, getFacultyForCourseDropdown, facultyList, updateAllocation }: any) {
+  const { preferred, remaining } = getFacultyForCourseDropdown(alloc.courseCode);
+  const value = type === 'main' ? alloc.mainFacultyId : alloc.asstFacultyId;
 
+  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedId = e.target.value || null;
+    const fac = facultyList.find((f: any) => f.id === selectedId);
+    
+    const updated = { ...alloc };
+    if (type === 'main') {
+      updated.mainFacultyId = selectedId;
+      updated.mainFacultyName = fac?.name;
+      updated.mainTheoryHours = alloc.theoryHours;
+      updated.mainPracticalHours = alloc.practicalHours;
+      updated.status = selectedId ? 'ALLOCATED' : 'UNALLOCATED';
+    } else {
+      updated.asstFacultyId = selectedId;
+      updated.asstFacultyName = fac?.name;
+      updated.asstTheoryHours = 0;
+      updated.asstPracticalHours = alloc.practicalHours > 0 ? alloc.practicalHours : 0;
+    }
+    
+    updateAllocation(updated);
+    toast.success(`Assigned ${type === 'main' ? 'Main' : 'Assistant'} Faculty for ${alloc.courseCode}`);
+  };
 
-function SkeletonRow() {
   return (
-    <tr className="animate-pulse bg-white border-b border-slate-100">
-      <td className="p-3"><div className="h-4 bg-slate-200 rounded w-24"></div></td>
-      <td className="p-3"><div className="h-4 bg-slate-200 rounded w-20"></div></td>
-      <td className="p-3"><div className="h-4 bg-slate-200 rounded w-32"></div></td>
-      <td className="p-3"><div className="h-6 bg-slate-200 rounded-full w-16"></div></td>
-      <td className="p-3"><div className="h-8 bg-slate-200 rounded w-16"></div></td>
-      <td className="p-3"><div className="h-8 bg-slate-200 rounded w-16"></div></td>
-      <td className="p-3 text-center"><div className="h-4 bg-slate-200 rounded w-8 mx-auto"></div></td>
-      <td className="p-3"><div className="h-6 bg-slate-200 rounded-full w-20"></div></td>
-    </tr>
+    <select
+      value={value || ''}
+      onChange={handleChange}
+      disabled={disabled}
+      className={`w-full min-w-[140px] max-w-[200px] h-7 rounded border px-1 text-[11px] font-bold ${
+        type === 'main'
+          ? 'border-blue-300 bg-blue-50/50 text-blue-900'
+          : 'border-teal-300 bg-teal-50/50 text-teal-900'
+      } disabled:opacity-50 disabled:bg-slate-100 disabled:border-slate-200 cursor-pointer`}
+    >
+      <option value="">-- Select --</option>
+      <optgroup label="⭐ PREFERRED">
+        {preferred.map((p: any) => (
+          <option key={p.faculty.id} value={p.faculty.id}>
+            ⭐ {p.faculty.name} ({p.remainingHours}h cap)
+          </option>
+        ))}
+      </optgroup>
+      <optgroup label="OTHER ELIGIBLE">
+        {remaining.map((r: any) => (
+          <option key={r.faculty.id} value={r.faculty.id}>
+            {r.faculty.name} ({r.remainingHours}h cap)
+          </option>
+        ))}
+      </optgroup>
+    </select>
   );
 }
 
-function AdminAllocation() {
+function AdminAllocationPage() {
   const {
-    programType,
-    setProgramType,
-    semesterType,
-    setSemesterType,
-    activeDepartmentName,
-    isAllocationLocked,
-    setIsAllocationLocked,
-  } = useWorkspace();
+    allocations,
+    facultyList,
+    courseList,
+    sectionList,
+    preferences,
+    allWorkloads,
+    updateAllocation,
+    createAllocation,
+    deleteAllocation,
+    getFacultyForCourseDropdown,
+  } = useWorkloadData();
 
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [allocations, setAllocations] = useState<AllocationRow[]>([]);
-  const [modifiedRows, setModifiedRows] = useState<Set<string>>(new Set());
+  // Page mode: 'management' (Subject List Table) | 'finalize' (Subject Finalization Screen) | 'class-matrix' (Class-Wise Allocation Matrix)
+  const [activeTab, setActiveTab] = useState<'management' | 'finalize' | 'class-matrix'>('management');
 
-  // Wipe Slate dialog
-  const [showWipe, setShowWipe] = useState(false);
-  const [wiping, setWiping] = useState(false);
+  // Academic Context Selector State
+  const [contextProgramme, setContextProgramme] = useState<ProgrammeType>('MCA GEN AI');
+  const [contextSemester, setContextSemester] = useState<SemesterType>('I');
+  const [contextSection, setContextSection] = useState<string>('I MCA GEN AI A');
 
-  // Lock & Publish dialog
-  const [showLock, setShowLock] = useState(false);
-  const [locking, setLocking] = useState(false);
+  // Subject Finalization Selected ID
+  const [finalizingAllocId, setFinalizingAllocId] = useState<string | null>(null);
 
-  // Verification Sheet
-  const [isVerifyOpen, setIsVerifyOpen] = useState(false);
-  const [verifyLoading, setVerifyLoading] = useState(false);
-  const [unassignedItems, setUnassignedItems] = useState<any[]>([]);
+  // Filters for management table
+  const [searchTerm, setSearchTerm] = useState('');
+  const [programmeFilter, setProgrammeFilter] = useState('ALL');
+  const [semesterFilter, setSemesterFilter] = useState('ALL');
+  const [sectionFilter, setSectionFilter] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ALLOCATED' | 'UNALLOCATED'>('ALL');
+  const [selectedFacultyFilter, setSelectedFacultyFilter] = useState<string>('ALL');
 
-  const fetchMatrix = async () => {
-    setLoading(true);
-    try {
-      const res = await api.get("/api/admin/preferences", {
-        params: { program_type: programType, semester_type: semesterType },
-      });
+  // Search inside Other Eligible Faculty list on Finalize Screen
+  const [otherFacultySearch, setOtherFacultySearch] = useState('');
 
-      const data = (res.data || []).map((item: any) => ({
-        id: item.id || `${item.faculty_id}_${item.subject_code}`,
-        faculty_id: item.faculty_id,
-        faculty_name: item.faculty_name || item.faculty_id,
-        subject_code: item.subject_code,
-        cohort_id: item.cohort_id || "",
-        cohort_name: item.cohort_name || "",
-        role_type: item.role_type || "Main",
-        allocated_theory_hours: item.allocated_theory_hours || 0,
-        allocated_lab_hours: item.allocated_lab_hours || 0,
-        max_theory: item.max_theory || 4,
-        max_lab: item.max_lab || 2,
-        has_conflict: item.has_conflict || false,
-        status: item.status || "PENDING",
-      }));
-      setAllocations(data);
-      setModifiedRows(new Set());
-    } catch (err: any) {
-      toast.error(
-        err.message || "Failed to fetch matrix data"
-      );
-    } finally {
-      setLoading(false);
-    }
+  // Edit/Add Allocation Modal State
+  const [editingAlloc, setEditingAlloc] = useState<CourseAllocation | null>(null);
+  const [isNewAllocModalOpen, setIsNewAllocModalOpen] = useState(false);
+
+  // New allocation form state
+  const [newCourseCode, setNewCourseCode] = useState(courseList[0]?.code || 'PCA25C01J');
+  const [newSection, setNewSection] = useState(sectionList[0]?.name || 'I MCA GEN AI A');
+  const [newStudents, setNewStudents] = useState(55);
+  const [newTheoryHours, setNewTheoryHours] = useState(3);
+  const [newPracticalHours, setNewPracticalHours] = useState(2);
+  const [newMainFacultyId, setNewMainFacultyId] = useState<string>('');
+  const [newAsstFacultyId, setNewAsstFacultyId] = useState<string>('');
+
+  // Target allocation being finalized
+  const targetAlloc = allocations.find((a) => a.id === finalizingAllocId) || allocations[0];
+
+  // Temporary local state while finalizing a subject
+  const [selectedMainId, setSelectedMainId] = useState<string | null>(targetAlloc?.mainFacultyId || null);
+  const [selectedAsstId, setSelectedAsstId] = useState<string | null>(targetAlloc?.asstFacultyId || null);
+  const [mainTh, setMainTh] = useState<number>(targetAlloc?.mainTheoryHours ?? targetAlloc?.theoryHours ?? 3);
+  const [mainPr, setMainPr] = useState<number>(targetAlloc?.mainPracticalHours ?? targetAlloc?.practicalHours ?? 2);
+  const [asstTh, setAsstTh] = useState<number>(targetAlloc?.asstTheoryHours ?? 0);
+  const [asstPr, setAsstPr] = useState<number>(targetAlloc?.asstPracticalHours ?? (targetAlloc?.practicalHours ? 2 : 0));
+
+  // Open Subject Finalization screen for a specific allocation
+  const handleOpenFinalize = (alloc: CourseAllocation) => {
+    setFinalizingAllocId(alloc.id);
+    setSelectedMainId(alloc.mainFacultyId);
+    setSelectedAsstId(alloc.asstFacultyId);
+    setMainTh(alloc.mainTheoryHours !== undefined ? alloc.mainTheoryHours : alloc.theoryHours);
+    setMainPr(alloc.mainPracticalHours !== undefined ? alloc.mainPracticalHours : alloc.practicalHours);
+    setAsstTh(alloc.asstTheoryHours !== undefined ? alloc.asstTheoryHours : 0);
+    setAsstPr(alloc.asstPracticalHours !== undefined ? alloc.asstPracticalHours : (alloc.practicalHours > 0 ? alloc.practicalHours : 0));
+    setActiveTab('finalize');
   };
 
-  useEffect(() => {
-    fetchMatrix();
-  }, [programType, semesterType]);
-
-  const handleCellChange = (
-    id: string,
-    field: "allocated_theory_hours" | "allocated_lab_hours",
-    value: string
-  ) => {
-    const numValue = Math.max(0, parseInt(value, 10) || 0);
-    setAllocations((prev) =>
-      prev.map((row) =>
-        row.id === id ? { ...row, [field]: numValue } : row
-      )
-    );
-    setModifiedRows((prev) => new Set(prev).add(id));
+  const handleSaveFinalization = (isFinalized: boolean) => {
+    // Left empty since we moved to inline editing
   };
 
-  const handleRoleChange = (id: string, role: string) => {
-    setAllocations((prev) =>
-      prev.map((row) =>
-        row.id === id ? { ...row, role_type: role } : row
-      )
-    );
-    setModifiedRows((prev) => new Set(prev).add(id));
+  // Filtered allocations for management table
+  const filteredAllocations = allocations.filter((alloc) => {
+    const matchesSearch =
+      alloc.courseCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      alloc.courseTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (alloc.mainFacultyName && alloc.mainFacultyName.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (alloc.asstFacultyName && alloc.asstFacultyName.toLowerCase().includes(searchTerm.toLowerCase()));
+
+    const matchesProg = programmeFilter === 'ALL' || alloc.programme === programmeFilter;
+    const matchesSem = semesterFilter === 'ALL' || alloc.semester === semesterFilter;
+    const matchesSec = sectionFilter === 'ALL' || alloc.section === sectionFilter;
+    const matchesStatus =
+      statusFilter === 'ALL' ||
+      (statusFilter === 'ALLOCATED' && alloc.mainFacultyId !== null) ||
+      (statusFilter === 'UNALLOCATED' && alloc.mainFacultyId === null);
+
+    const matchesFaculty =
+      selectedFacultyFilter === 'ALL' ||
+      alloc.mainFacultyId === selectedFacultyFilter ||
+      alloc.asstFacultyId === selectedFacultyFilter;
+
+    return matchesSearch && matchesProg && matchesSem && matchesSec && matchesStatus && matchesFaculty;
+  });
+
+  const handleExport = () => {
+    exportCourseAllocationToExcel(allocations);
+    toast.success('Course allocation spreadsheet exported successfully!');
   };
 
-  // Live math: faculty total hours
-  const facultyTotals = useMemo(() => {
-    const totals: Record<string, { theory: number; lab: number; total: number }> = {};
-    allocations.forEach((row) => {
-      if (!totals[row.faculty_id]) {
-        totals[row.faculty_id] = { theory: 0, lab: 0, total: 0 };
-      }
-      const entry = totals[row.faculty_id]!;
-      entry.theory += row.allocated_theory_hours;
-      entry.lab += row.allocated_lab_hours;
-      entry.total += row.allocated_theory_hours + row.allocated_lab_hours;
-    });
-    return totals;
-  }, [allocations]);
+  const handleCreateNewAllocation = () => {
+    const course = courseList.find((c) => c.code === newCourseCode);
+    const mainFac = facultyList.find((f) => f.id === newMainFacultyId);
+    const asstFac = facultyList.find((f) => f.id === newAsstFacultyId);
 
-  const handleSave = async () => {
-    const changes = allocations.filter((row) => modifiedRows.has(row.id));
-    if (changes.length === 0) return;
+    const newAlloc: CourseAllocation = {
+      id: `ALLOC_${Date.now()}`,
+      courseCode: newCourseCode,
+      courseTitle: course?.title || newCourseCode,
+      programme: course?.programme || 'MCA GEN AI',
+      semester: course?.semester || 'I',
+      section: newSection,
+      studentCount: newStudents,
+      theoryHours: newTheoryHours,
+      practicalHours: newPracticalHours,
+      labBatches: newPracticalHours > 0 ? 2 : 0,
+      mainFacultyId: newMainFacultyId || null,
+      mainFacultyName: mainFac?.name,
+      asstFacultyId: newAsstFacultyId || null,
+      asstFacultyName: asstFac?.name,
+      totalHours: newTheoryHours + newPracticalHours,
+      status: newMainFacultyId ? 'ALLOCATED' : 'UNALLOCATED',
+    };
 
-    setSaving(true);
-    try {
-      const cohortGroups: Record<string, any[]> = {};
-      changes.forEach((row) => {
-        const key = `${row.cohort_id}_${row.subject_code}`;
-        if (!cohortGroups[key]) cohortGroups[key] = [];
-        cohortGroups[key].push({
-          faculty_id: row.faculty_id,
-          role_type: row.role_type,
-          theory_hours: row.allocated_theory_hours,
-          lab_hours: row.allocated_lab_hours,
-        });
-      });
-
-      for (const [key, allocs] of Object.entries(cohortGroups)) {
-        const [cid, sc] = key.split("_");
-        await api.post("/api/admin/allocations/assign", {
-          cohort_id: cid,
-          subject_code: sc,
-          allocations: allocs,
-        });
-      }
-
-      toast.success(
-        `Successfully updated ${changes.length} assignment(s) and recorded Audit Logs.`
-      );
-      setModifiedRows(new Set());
-    } catch (err: any) {
-      toast.error(
-        err.message || "Failed to assign workload."
-      );
-    } finally {
-      setSaving(false);
-    }
+    createAllocation(newAlloc);
+    toast.success(`Created allocation for ${newCourseCode} (${newSection})`);
+    setIsNewAllocModalOpen(false);
   };
 
-  const handleWipeSlate = async () => {
-    setWiping(true);
-    try {
-      await api.post("/api/admin/allocations/wipe", {
-        program_type: programType,
-        semester_type: semesterType,
-      });
-      toast.success(
-        "All allocations wiped! The matrix has been cleared."
-      );
-      setShowWipe(false);
-      fetchMatrix();
-    } catch (err: any) {
-      toast.error(
-        err.message || "Failed to wipe allocations."
-      );
-    } finally {
-      setWiping(false);
-    }
-  };
+  /**
+   * Preferred vs Other Eligible breakdown for active target course
+   */
+  const courseCodeForFinalize = targetAlloc?.courseCode || 'PCA25C01J';
+  const { preferred, remaining } = getFacultyForCourseDropdown(courseCodeForFinalize);
 
-  const handleLockPublish = async () => {
-    setLocking(true);
-    try {
-      await api.post("/api/admin/allocations/lock", {
-        program_type: programType,
-        semester_type: semesterType,
-      });
-      setIsAllocationLocked(true);
-      toast.success(
-        "Workload locked & published! Email notifications sent to faculty."
-      );
-      setShowLock(false);
-    } catch (err: any) {
-      toast.error(
-        err.message || "Failed to lock allocations."
-      );
-    } finally {
-      setLocking(false);
-    }
-  };
+  const filteredOtherFaculty = remaining.filter(
+    (item) =>
+      item.faculty.name.toLowerCase().includes(otherFacultySearch.toLowerCase()) ||
+      item.faculty.designation.toLowerCase().includes(otherFacultySearch.toLowerCase())
+  );
 
-  const handleVerify = async () => {
-    setIsVerifyOpen(true);
-    setVerifyLoading(true);
-    try {
-      const res = await api.get("/api/admin/verify-allocations", {
-        params: { program_type: programType, semester_type: semesterType },
-      });
-      setUnassignedItems(res.data.issues || []);
-    } catch (err: any) {
-      toast.error(
-        err.message || "Failed to run verification sweep"
-      );
-    } finally {
-      setVerifyLoading(false);
-    }
-  };
+  // Reconciliation calculations for active subject finalization
+  const requiredTheory = targetAlloc?.theoryHours || 0;
+  const requiredPractical = targetAlloc?.practicalHours || 0;
+  const requiredTotal = requiredTheory + requiredPractical;
 
-  const handleExportPDF = () => {
-    try {
-      const toastId = toast.loading("Generating PDF...");
+  const allocatedTheory = (selectedMainId ? mainTh : 0) + (selectedAsstId ? asstTh : 0);
+  const allocatedPractical = (selectedMainId ? mainPr : 0) + (selectedAsstId ? asstPr : 0);
+  const allocatedTotal = allocatedTheory + allocatedPractical;
 
-      const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-
-      // University Header
-      doc.setFontSize(18);
-      doc.setFont("helvetica", "bold");
-      doc.text("SRM Institute of Science and Technology", 148.5, 15, { align: "center" });
-
-      doc.setFontSize(12);
-      doc.setFont("helvetica", "normal");
-      doc.text("Faculty Workload Allocation Matrix", 148.5, 22, { align: "center" });
-
-      doc.setFontSize(10);
-      doc.text(
-        `Department: ${activeDepartmentName || "All"} | Program: ${programType} | Semester: ${semesterType}`,
-        148.5,
-        28,
-        { align: "center" }
-      );
-
-      doc.setDrawColor(59, 130, 246);
-      doc.setLineWidth(0.5);
-      doc.line(20, 31, 277, 31);
-
-      // Table Data
-      const tableData = allocations.map((row) => [
-        row.faculty_name,
-        row.subject_code,
-        row.cohort_name || "Unassigned",
-        row.role_type,
-        row.allocated_theory_hours.toString(),
-        row.allocated_lab_hours.toString(),
-        (row.allocated_theory_hours + row.allocated_lab_hours).toString(),
-        row.has_conflict ? "âš  CONFLICT" : "OK",
-      ]);
-
-      autoTable(doc, {
-        startY: 35,
-        head: [
-          [
-            "Faculty Name",
-            "Subject Code",
-            "Cohort",
-            "Role",
-            "Theory Hrs",
-            "Lab Hrs",
-            "Total Hrs",
-            "Status",
-          ],
-        ],
-        body: tableData,
-        theme: "grid",
-        headStyles: {
-          fillColor: [59, 130, 246],
-          textColor: 255,
-          fontStyle: "bold",
-          fontSize: 9,
-        },
-        bodyStyles: { fontSize: 8 },
-        alternateRowStyles: { fillColor: [245, 247, 250] },
-        styles: {
-          cellPadding: 3,
-          lineColor: [200, 210, 230],
-          lineWidth: 0.25,
-        },
-        columnStyles: {
-          4: { halign: "center" },
-          5: { halign: "center" },
-          6: { halign: "center", fontStyle: "bold" },
-          7: { halign: "center" },
-        },
-      });
-
-      // Footer
-      const pageCount = doc.getNumberOfPages();
-      for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor(128);
-        doc.text(
-          `Generated: ${new Date().toLocaleString("en-IN")} | Page ${i} of ${pageCount}`,
-          148.5,
-          200,
-          { align: "center" }
-        );
-      }
-
-      doc.save(
-        `Workload_Matrix_${activeDepartmentName || "All"}_${programType}_${semesterType}.pdf`
-      );
-      toast.success("PDF downloaded successfully!", { id: toastId });
-    } catch (err) {
-      console.error("PDF generation failed:", err);
-      toast.error("Failed to generate PDF export.");
-    }
-  };
+  const isReconciled = requiredTotal > 0 && allocatedTotal === requiredTotal;
 
   return (
-    <PortalShell
+    <WorkloadShell
       role="admin"
-      title="Workload Allocation Matrix"
-      subtitle="Granular workload distribution, conflict resolution & publishing"
-      nav={adminNav}
+      title="HOD Subject Allocation & Finalization Portal"
+      subtitle="Configure main/assistant faculty, credited theory/lab hours, and class-wise curriculum allocations"
+      actions={
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => window.history.back()}
+            className="h-8 gap-1 text-xs text-slate-500 hover:text-slate-800 border border-slate-200 bg-white"
+          >
+            <ArrowLeft className="size-3.5" />
+            <span>Back</span>
+          </Button>
+
+          <Button
+            size="sm"
+            variant={activeTab === 'management' ? 'default' : 'outline'}
+            onClick={() => setActiveTab('management')}
+            className={`h-8 gap-1.5 text-xs ${activeTab === 'management' ? 'bg-[#002147] text-white' : 'bg-white'}`}
+          >
+            <SlidersHorizontal className="size-3.5" />
+            <span>Subject Allocations List</span>
+          </Button>
+
+          <Button
+            size="sm"
+            variant={activeTab === 'class-matrix' ? 'default' : 'outline'}
+            onClick={() => setActiveTab('class-matrix')}
+            className={`h-8 gap-1.5 text-xs ${activeTab === 'class-matrix' ? 'bg-[#002147] text-white' : 'bg-white'}`}
+          >
+            <BookOpen className="size-3.5 text-teal-300" />
+            <span>Class-Wise Matrix</span>
+          </Button>
+
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleExport}
+            className="h-8 gap-1.5 text-xs border-slate-300 bg-white hover:bg-slate-100 text-slate-800"
+          >
+            <FileSpreadsheet className="size-3.5 text-emerald-600" />
+            <span>Export Excel</span>
+          </Button>
+        </div>
+      }
     >
-      <div className="flex flex-col gap-6 h-full animate-in fade-in slide-in-from-bottom-4 duration-500">
-        {/* Locked Banner */}
-        {isAllocationLocked && (
-          <div className="flex items-center gap-3 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm animate-in slide-in-from-top-2 duration-300">
-            <Lock className="size-5 text-indigo-600 shrink-0" />
-            <div>
-              <p className="text-sm font-semibold text-indigo-800">
-                Workload is Locked & Published
-              </p>
-              <p className="text-xs text-indigo-600/70">
-                Faculty have been notified. Matrix is read-only.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Top Toolbar */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
-          <div className="flex items-center gap-4">
-            <ToggleGroup
-              type="single"
-              value={programType}
-              onValueChange={(v) => v && setProgramType(v)}
-              className="bg-muted p-1.5 rounded-xl"
-            >
-              <ToggleGroupItem
-                value="UG"
-                className="rounded-lg px-4 font-semibold text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:shadow-md transition-all"
-              >
-                UG
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                value="PG"
-                className="rounded-lg px-4 font-semibold text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:shadow-md transition-all"
-              >
-                PG
-              </ToggleGroupItem>
-            </ToggleGroup>
-            <ToggleGroup
-              type="single"
-              value={semesterType}
-              onValueChange={(v) => v && setSemesterType(v)}
-              className="bg-muted p-1.5 rounded-xl"
-            >
-              <ToggleGroupItem
-                value="Odd"
-                className="rounded-lg px-4 font-semibold text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:shadow-md transition-all"
-              >
-                Odd
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                value="Even"
-                className="rounded-lg px-4 font-semibold text-sm data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:shadow-md transition-all"
-              >
-                Even
-              </ToggleGroupItem>
-            </ToggleGroup>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={fetchMatrix}
-              disabled={loading}
-              title="Refresh Matrix"
-              className="rounded-xl"
-            >
-              <RefreshCw
-                className={`size-4 text-primary ${loading ? "animate-spin" : ""}`}
-              />
-            </Button>
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* 1. ACADEMIC CONTEXT SELECTOR BAR */}
+      {/* ────────────────────────────────────────────────────────── */}
+      <div className="rounded-xl border border-blue-900/40 bg-[#002147] text-white p-4 shadow-md space-y-3">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-blue-800/80 pb-3">
+          <div className="flex items-center gap-2">
+            <Building className="size-4 text-teal-300" />
+            <h3 className="text-xs font-bold uppercase tracking-wider text-white">
+              Academic Context Selector
+            </h3>
+            <span className="text-[10px] bg-teal-500/20 text-teal-300 border border-teal-400/30 px-2 py-0.5 rounded font-mono">
+              ODD Semester 2026-2027
+            </span>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Wipe Slate */}
-            <Button
-              variant="outline"
-              onClick={() => setShowWipe(true)}
-              disabled={isAllocationLocked}
-              className="gap-2 rounded-xl text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 shadow-sm transition-all hover:-translate-y-0.5"
-            >
-              <Trash2 className="size-4" /> Wipe Slate
-            </Button>
-
-            {/* Verify */}
-            <Button
-              variant="outline"
-              onClick={handleVerify}
-              className="gap-2 rounded-xl text-amber-600 bg-amber-50 hover:bg-amber-100 border border-amber-200 shadow-sm transition-all hover:-translate-y-0.5"
-            >
-              <ShieldAlert className="size-4" /> Verify
-            </Button>
-
-            {/* Export PDF */}
-            <Button
-              variant="outline"
-              onClick={handleExportPDF}
-              className="gap-2 rounded-xl shadow-sm transition-all hover:-translate-y-0.5"
-            >
-              <FileDown className="size-4" /> Export PDF
-            </Button>
-
-            {/* Lock & Publish */}
-            <Button
-              onClick={() => setShowLock(true)}
-              disabled={isAllocationLocked}
-              className="gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-lg transition-all hover:-translate-y-0.5"
-            >
-              <Lock className="size-4" /> Lock & Publish
-            </Button>
-
-            {/* Save */}
-            <Button
-              onClick={handleSave}
-              disabled={
-                modifiedRows.size === 0 || saving || isAllocationLocked
-              }
-              className="gap-2 rounded-xl bg-gradient-to-r from-primary to-indigo-600 hover:from-primary/90 hover:to-indigo-600/90 shadow-lg transition-all hover:-translate-y-0.5"
-            >
-              <Save className="size-4" />{" "}
-              {saving
-                ? "Saving..."
-                : `Commit Changes (${modifiedRows.size})`}
-            </Button>
+          <div className="text-xs text-blue-200">
+            Selected Context Scope Controls Displayed Subjects &amp; Allocations
           </div>
         </div>
 
-        {/* Data Grid */}
-        <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden flex-1 flex flex-col min-h-[500px]">
-          <div className="overflow-x-auto flex-1 relative">
-            <table className="w-full text-sm text-left border-collapse">
-              <thead className="text-xs text-muted-foreground bg-muted/50 uppercase sticky top-0 z-10">
-                <tr>
-                  <th className="px-5 py-4 font-bold tracking-wider">
-                    Faculty
-                  </th>
-                  <th className="px-5 py-4 font-bold tracking-wider">
-                    Subject
-                  </th>
-                  <th className="px-5 py-4 font-bold tracking-wider">
-                    Cohort
-                  </th>
-                  <th className="px-5 py-4 font-bold tracking-wider">
-                    Role
-                  </th>
-                  <th className="px-5 py-4 font-bold tracking-wider text-center">
-                    Theory
-                  </th>
-                  <th className="px-5 py-4 font-bold tracking-wider text-center">
-                    Lab
-                  </th>
-                  <th className="px-5 py-4 font-bold tracking-wider text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <Calculator className="size-3" /> Total
-                    </div>
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {loading ? (
-                  <tr>
-                    <td
-                      colSpan={7}
-                      className="px-6 py-16 text-center text-muted-foreground"
-                    >
-                      <Loader2 className="mx-auto size-8 animate-spin text-primary opacity-60 mb-3" />
-                      <p className="font-medium">
-                        Loading allocation matrix...
-                      </p>
-                    </td>
-                  </tr>
-                ) : allocations.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="px-6 py-16 text-center">
-                      <div className="flex flex-col items-center justify-center opacity-60">
-                        <AlertTriangle className="size-12 mb-3 text-muted-foreground" />
-                        <p className="font-semibold text-lg">
-                          No Faculty Preferences Submitted
-                        </p>
-                        <p className="text-sm mt-1">
-                          Faculty must log in and submit their Carts before the
-                          matrix generates.
-                        </p>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  allocations.map((row) => {
-                    const totalHrs =
-                      row.allocated_theory_hours + row.allocated_lab_hours;
-                    return (
-                      <tr
-                        key={row.id}
-                        className={`group hover:bg-muted/30 transition-all duration-200 ${modifiedRows.has(row.id) ? "bg-indigo-50/40" : ""} ${row.has_conflict ? "bg-red-50/30" : ""}`}
-                      >
-                        <td className="px-5 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="size-8 rounded-full bg-gradient-to-tr from-primary/20 to-indigo-500/20 flex items-center justify-center font-bold text-primary shrink-0 text-xs">
-                              {row.faculty_name.charAt(0)}
-                            </div>
-                            <div>
-                              <span className="font-semibold text-foreground block text-sm">
-                                {row.faculty_name}
-                              </span>
-                              {facultyTotals[row.faculty_id] && (
-                                <span className="text-[10px] text-muted-foreground">
-                                  Faculty Total:{" "}
-                                  <span className="font-bold">
-                                    {facultyTotals[row.faculty_id]?.total ?? 0}h
-                                  </span>
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-5 py-4">
-                          <div className="flex flex-col gap-1.5">
-                            <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-md border border-indigo-200 inline-block w-fit shadow-sm">
-                              {row.subject_code}
-                            </span>
-                            {row.has_conflict && (
-                              <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-md border border-red-200 w-fit shadow-sm animate-pulse">
-                                <ShieldAlert className="size-3" /> âš ï¸ Conflict
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-5 py-4">
-                          {row.cohort_name ? (
-                            <span className="font-medium text-foreground text-sm">
-                              {row.cohort_name}
-                            </span>
-                          ) : (
-                            <span className="text-xs font-semibold text-amber-600 bg-amber-100 px-2.5 py-1 rounded-md border border-amber-200">
-                              Unassigned
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-5 py-4">
-                          <Select
-                            value={row.role_type}
-                            onValueChange={(v) => handleRoleChange(row.id, v)}
-                            disabled={isAllocationLocked}
-                          >
-                            <SelectTrigger className="w-[130px] h-8 text-xs rounded-lg">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="Main">
-                                Main Faculty
-                              </SelectItem>
-                              <SelectItem value="Assist">
-                                Assist / Incharge 2
-                              </SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </td>
-                        <td className="px-5 py-4">
-                          <div className="flex justify-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              max={row.max_theory}
-                              className={`w-16 h-8 font-mono text-center text-sm font-semibold rounded-lg transition-all ${modifiedRows.has(row.id) ? "border-primary/50 bg-primary/5" : "bg-background border-border"}`}
-                              value={row.allocated_theory_hours.toString()}
-                              onChange={(e) =>
-                                handleCellChange(
-                                  row.id,
-                                  "allocated_theory_hours",
-                                  e.target.value
-                                )
-                              }
-                              disabled={isAllocationLocked}
-                            />
-                          </div>
-                        </td>
-                        <td className="px-5 py-4">
-                          <div className="flex justify-center">
-                            <Input
-                              type="number"
-                              min={0}
-                              max={row.max_lab}
-                              className={`w-16 h-8 font-mono text-center text-sm font-semibold rounded-lg transition-all ${modifiedRows.has(row.id) ? "border-primary/50 bg-primary/5" : "bg-background border-border"}`}
-                              value={row.allocated_lab_hours.toString()}
-                              onChange={(e) =>
-                                handleCellChange(
-                                  row.id,
-                                  "allocated_lab_hours",
-                                  e.target.value
-                                )
-                              }
-                              disabled={isAllocationLocked}
-                            />
-                          </div>
-                        </td>
-                        <td className="px-5 py-4">
-                          <div className="flex justify-center">
-                            <span
-                              className={`inline-flex items-center justify-center w-16 h-8 rounded-lg font-mono text-sm font-bold shadow-sm border ${totalHrs > 0 ? "bg-indigo-50 text-indigo-700 border-indigo-200" : "bg-muted text-muted-foreground border-border"}`}
-                            >
-                              {totalHrs}h
-                            </span>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+          <div>
+            <label className="block text-[10px] font-bold text-blue-200 uppercase mb-1">Academic Year</label>
+            <div className="h-8 rounded bg-white/10 border border-white/20 px-2.5 flex items-center font-bold text-white">
+              2026–2027
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold text-blue-200 uppercase mb-1">Semester</label>
+            <div className="h-8 rounded bg-white/10 border border-white/20 px-2.5 flex items-center font-bold text-teal-300">
+              ODD SEMESTER
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold text-blue-200 uppercase mb-1">Programme</label>
+            <select
+              value={contextProgramme}
+              onChange={(e) => setContextProgramme(e.target.value as ProgrammeType)}
+              className="w-full h-8 rounded bg-blue-950 border border-blue-400/40 px-2 font-bold text-white"
+            >
+              <option value="MCA GEN AI">MCA GEN AI</option>
+              <option value="MCA">MCA</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold text-blue-200 uppercase mb-1">Semester / Year</label>
+            <select
+              value={contextSemester}
+              onChange={(e) => setContextSemester(e.target.value as SemesterType)}
+              className="w-full h-8 rounded bg-blue-950 border border-blue-400/40 px-2 font-bold text-white"
+            >
+              <option value="I">I Year (Semester I)</option>
+              <option value="III">II Year (Semester III)</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold text-blue-200 uppercase mb-1">Section</label>
+            <select
+              value={contextSection}
+              onChange={(e) => setContextSection(e.target.value)}
+              className="w-full h-8 rounded bg-blue-950 border border-blue-400/40 px-2 font-bold text-white"
+            >
+              {sectionList.map((sec) => (
+                <option key={sec.id} value={sec.name}>
+                  {sec.name}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>
 
-      {/* Wipe Slate Confirmation */}
-      <AlertDialog open={showWipe} onOpenChange={setShowWipe}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-destructive flex items-center gap-2">
-              <Trash2 className="size-5" /> Wipe All Allocations?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently clear ALL allocation data for{" "}
-              <strong>
-                {programType} â€” {semesterType} Semester
-              </strong>
-              . Faculty will need to resubmit their preferences. This action
-              cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={wiping}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleWipeSlate}
-              disabled={wiping}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {wiping ? (
-                <Loader2 className="size-4 animate-spin mr-2" />
-              ) : (
-                <Trash2 className="size-4 mr-2" />
-              )}
-              {wiping ? "Wiping..." : "Wipe Everything"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Lock & Publish Confirmation */}
-      <AlertDialog open={showLock} onOpenChange={setShowLock}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="text-emerald-700 flex items-center gap-2">
-              <Lock className="size-5" /> Lock & Publish Workload?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              This will finalize the{" "}
-              <strong>
-                {programType} â€” {semesterType}
-              </strong>{" "}
-              workload matrix, lock it from further edits, and send email
-              notifications to all assigned faculty members. Ensure all
-              allocations are verified before proceeding.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={locking}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleLockPublish}
-              disabled={locking}
-              className="bg-emerald-600 text-white hover:bg-emerald-700"
-            >
-              {locking ? (
-                <Loader2 className="size-4 animate-spin mr-2" />
-              ) : (
-                <Lock className="size-4 mr-2" />
-              )}
-              {locking ? "Publishing..." : "Lock & Publish"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Verification Slide-Over */}
-      <Sheet open={isVerifyOpen} onOpenChange={setIsVerifyOpen}>
-        <SheetContent className="sm:max-w-md w-full overflow-y-auto">
-          <SheetHeader className="mb-6">
-            <SheetTitle className="flex items-center gap-2 text-primary text-xl">
-              <ShieldAlert className="size-6 text-amber-500" />
-              Verification Sweep
-            </SheetTitle>
-            <SheetDescription>
-              Identifying unassigned curriculum mapping and allocation gaps
-              across the {programType} {semesterType} workspace.
-            </SheetDescription>
-          </SheetHeader>
-
-          <div className="space-y-4">
-            {verifyLoading ? (
-              <div className="flex items-center justify-center py-12 text-primary">
-                <RefreshCw className="size-8 animate-spin opacity-50" />
-              </div>
-            ) : unassignedItems.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center animate-in zoom-in duration-500">
-                <div className="size-20 rounded-full bg-green-100 flex items-center justify-center mb-5 shadow-inner">
-                  <CheckCircle2 className="size-10 text-green-600" />
-                </div>
-                <h3 className="font-bold text-xl text-foreground">
-                  100% Verified
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* 2. TAB A: SUBJECT ALLOCATIONS LIST TABLE */}
+      {/* ────────────────────────────────────────────────────────── */}
+      {activeTab === 'management' && (
+        <div className="space-y-6">
+          {/* Live Deduction Tracker */}
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Users className="size-4 text-[#002147]" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-900">
+                  Faculty Workload Capacity Tracker
                 </h3>
-                <p className="text-sm text-muted-foreground mt-2 font-medium">
-                  All cohorts and subjects are fully mapped and allocated.
+              </div>
+              <span className="text-[11px] text-slate-500 font-mono">
+                Click any faculty to filter their assignments
+              </span>
+            </div>
+
+            <div className="flex gap-2.5 overflow-x-auto pb-2 scrollbar-thin">
+              {allWorkloads.map((w) => {
+                const isSelected = selectedFacultyFilter === w.facultyId;
+                return (
+                  <div
+                    key={w.facultyId}
+                    onClick={() => setSelectedFacultyFilter(isSelected ? 'ALL' : w.facultyId)}
+                    className={`shrink-0 w-44 rounded-lg p-2.5 cursor-pointer border transition-all ${
+                      isSelected
+                        ? 'border-[#002147] bg-blue-50 ring-2 ring-[#002147]/20 shadow-sm'
+                        : 'border-slate-200 bg-slate-50/70 hover:bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-1">
+                      <span className="font-bold text-xs text-slate-900 truncate" title={w.facultyName}>
+                        {w.facultyName}
+                      </span>
+                      <WorkloadStatusBadge status={w.status} size="sm" />
+                    </div>
+                    <p className="text-[10px] text-slate-500 truncate">{w.designation}</p>
+                    <div className="mt-2 pt-1 border-t border-slate-200 flex justify-between text-[11px] font-mono">
+                      <span>Target: <strong>{w.defaultHours}h</strong></span>
+                      <span className="text-blue-700 font-bold">Total: {w.allocatedHours}h</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Table Container */}
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+                  Subject Allocation Management
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Select any subject and click <strong className="text-blue-800">[ Finalize ]</strong> to perform detailed faculty mapping.
                 </p>
               </div>
-            ) : (
-              <div className="space-y-3">
-                <h3 className="text-xs font-bold text-red-500 uppercase tracking-widest mb-3">
-                  Unassigned Items ({unassignedItems.length})
-                </h3>
-                {unassignedItems.map((item: any, idx: number) => (
-                  <div
-                    key={idx}
-                    className="rounded-xl border border-red-200 bg-red-50/50 p-4 shadow-sm"
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <span className="font-mono text-sm font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded border border-red-200">
-                        {item.subject_code}
-                      </span>
-                      <span className="text-xs font-semibold text-muted-foreground bg-white px-2 py-0.5 rounded shadow-sm">
-                        {item.cohort_name}
-                      </span>
-                    </div>
-                    <p className="text-sm font-medium text-foreground">
-                      Missing{" "}
-                      <span className="text-red-600 font-bold">
-                        {item.missing_hours}
-                      </span>{" "}
-                      hours of {item.missing_type} allocation.
-                    </p>
-                  </div>
-                ))}
+
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => setIsNewAllocModalOpen(true)}
+                  className="h-8 gap-1.5 text-xs bg-[#002147] text-white"
+                >
+                  <Plus className="size-3.5 text-teal-300" />
+                  <span>Add New Offering</span>
+                </Button>
               </div>
-            )}
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left border-collapse min-w-[1000px]">
+                <thead className="text-[11px] font-bold text-slate-600 bg-slate-100 uppercase border-b border-slate-200">
+                  <tr>
+                    <th className="px-3.5 py-2.5">Subject Code</th>
+                    <th className="px-3.5 py-2.5">Subject Title</th>
+                    <th className="px-3.5 py-2.5">Programme &amp; Section</th>
+                    <th className="px-3.5 py-2.5 text-center">L (Th)</th>
+                    <th className="px-3.5 py-2.5 text-center">P (Lab)</th>
+                    <th className="px-3.5 py-2.5 text-center">Total Req</th>
+                    <th className="px-3.5 py-2.5">Main Faculty</th>
+                    <th className="px-3.5 py-2.5">Assistant / IN-2</th>
+                    <th className="px-3.5 py-2.5 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {filteredAllocations.map((alloc) => (
+                    <tr key={alloc.id} className="hover:bg-blue-50/30 transition-colors">
+                      <td className="px-3.5 py-2.5 font-mono font-bold text-blue-700">
+                        {alloc.courseCode}
+                      </td>
+                      <td className="px-3.5 py-2.5 font-semibold text-slate-900 max-w-xs truncate" title={alloc.courseTitle}>
+                        {alloc.courseTitle}
+                      </td>
+                      <td className="px-3.5 py-2.5 font-medium text-slate-700 font-mono">
+                        {alloc.section} ({alloc.programme})
+                      </td>
+                      <td className="px-3.5 py-2.5 text-center font-mono text-slate-800">
+                        {alloc.theoryHours}h
+                      </td>
+                      <td className="px-3.5 py-2.5 text-center font-mono text-slate-800">
+                        {alloc.practicalHours}h
+                      </td>
+                      <td className="px-3.5 py-2.5 text-center font-mono font-bold text-slate-900 bg-slate-50">
+                        {alloc.totalHours}h
+                      </td>
+                      <td className="px-3.5 py-2.5 font-semibold text-slate-900">
+                        <FacultyInlineSelect
+                          alloc={alloc}
+                          type="main"
+                          facultyList={facultyList}
+                          updateAllocation={updateAllocation}
+                          getFacultyForCourseDropdown={getFacultyForCourseDropdown}
+                        />
+                      </td>
+                      <td className="px-3.5 py-2.5 text-slate-600">
+                        {alloc.practicalHours > 0 ? (
+                          <FacultyInlineSelect
+                            alloc={alloc}
+                            type="asst"
+                            facultyList={facultyList}
+                            updateAllocation={updateAllocation}
+                            getFacultyForCourseDropdown={getFacultyForCourseDropdown}
+                          />
+                        ) : (
+                          <span className="text-slate-400 italic text-[11px] px-2 block text-center border border-dashed rounded bg-slate-50 py-1">No Lab Component</span>
+                        )}
+                      </td>
+                      <td className="px-3.5 py-2.5 text-center">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            alloc.status === 'FINALIZED' || alloc.status === 'RECONCILED'
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : alloc.mainFacultyId
+                              ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                              : 'bg-rose-100 text-rose-800 border border-rose-300'
+                          }`}
+                        >
+                          {alloc.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </SheetContent>
-      </Sheet>
-    </PortalShell>
+        </div>
+      )}
+
+
+
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* 4. TAB C: CLASS-WISE CURRICULUM ALLOCATION MATRIX (Untitled spreadsheet (1).xlsx) */}
+      {/* ────────────────────────────────────────────────────────── */}
+      {activeTab === 'class-matrix' && (
+        <div className="space-y-6">
+          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-6">
+            <div className="text-center space-y-1 border-b pb-4">
+              <h2 className="font-bold text-sm text-slate-800 tracking-wider uppercase">
+                SRM INSTITUTE OF SCIENCE AND TECHNOLOGY
+              </h2>
+              <h3 className="font-extrabold text-base text-[#002147]">
+                CLASS-WISE CURRICULUM ALLOCATION MATRIX
+              </h3>
+              <p className="text-xs text-slate-500 font-medium">
+                {contextProgramme} · Semester {contextSemester} · Digital Replica of Official Allocation Master Sheet
+              </p>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left border border-slate-300 border-collapse min-w-[950px]">
+                <thead className="bg-slate-100 text-[11px] font-bold text-slate-800 border-b border-slate-300 uppercase">
+                  <tr>
+                    <th className="border border-slate-300 px-3 py-2 text-center w-12">S.No</th>
+                    <th className="border border-slate-300 px-3 py-2">Subject Code</th>
+                    <th className="border border-slate-300 px-3 py-2">Subject Name</th>
+                    <th className="border border-slate-300 px-3 py-2 text-center">L (Th)</th>
+                    <th className="border border-slate-300 px-3 py-2 text-center">P (Lab)</th>
+                    <th className="border border-slate-300 px-3 py-2 text-center">Total</th>
+                    <th className="border border-slate-300 px-3 py-2">Main Faculty</th>
+                    <th className="border border-slate-300 px-3 py-2">Assistant Faculty (IN2 Lab)</th>
+                    <th className="border border-slate-300 px-3 py-2 text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {allocations
+                    .filter((a) => a.programme === contextProgramme && a.semester === contextSemester)
+                    .map((alloc, idx) => {
+                      const hasLab = alloc.practicalHours > 0;
+
+                      return (
+                        <tr key={alloc.id} className="hover:bg-slate-50">
+                          <td className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">
+                            {idx + 1}
+                          </td>
+                          <td className="border border-slate-300 px-3 py-2 font-mono font-bold text-blue-700">
+                            {alloc.courseCode}
+                          </td>
+                          <td className="border border-slate-300 px-3 py-2 font-semibold text-slate-900">
+                            {alloc.courseTitle}
+                          </td>
+                          <td className="border border-slate-300 px-3 py-2 text-center font-mono font-semibold text-slate-800">
+                            {alloc.theoryHours}
+                          </td>
+                          <td className="border border-slate-300 px-3 py-2 text-center font-mono font-semibold text-slate-800">
+                            {alloc.practicalHours}
+                          </td>
+                          <td className="border border-slate-300 px-3 py-2 text-center font-mono font-bold text-blue-900 bg-blue-50/50">
+                            {alloc.totalHours} hrs
+                          </td>
+                          <td className="border border-slate-300 px-3 py-2">
+                            <span className="font-bold text-slate-900">
+                              {alloc.mainFacultyName || <span className="text-rose-600 italic">Unassigned</span>}
+                            </span>
+                          </td>
+
+                          {/* ASSISTANT FACULTY CELL - BLACK CELL FOR 0 LAB COURSES AS REQUESTED */}
+                          {hasLab ? (
+                            <td className="border border-slate-300 px-3 py-2 text-slate-700 font-medium">
+                              {alloc.asstFacultyName || <span className="text-amber-600 italic">Pending Asst</span>}
+                            </td>
+                          ) : (
+                            <td className="border border-slate-900 bg-[#0f172a] text-slate-400 font-mono text-[10px] text-center uppercase tracking-wider py-2">
+                              — NO LAB / NO ASST —
+                            </td>
+                          )}
+
+                          <td className="border border-slate-300 px-3 py-2 text-center">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                alloc.status === 'FINALIZED'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : alloc.mainFacultyId
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-rose-100 text-rose-800'
+                              }`}
+                            >
+                              {alloc.status}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* 5. NEW ALLOCATION MODAL */}
+      {/* ────────────────────────────────────────────────────────── */}
+      <Dialog open={isNewAllocModalOpen} onOpenChange={setIsNewAllocModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="size-4 text-teal-600" />
+              Add Class Allocation
+            </DialogTitle>
+            <DialogDescription>
+              Create a new course offering and assign faculty members with live deduction tracking.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-xs">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">Select Course</label>
+              <select
+                value={newCourseCode}
+                onChange={(e) => {
+                  setNewCourseCode(e.target.value);
+                  const c = courseList.find((x) => x.code === e.target.value);
+                  if (c) {
+                    setNewTheoryHours(c.theoryHours_L);
+                    setNewPracticalHours(c.practicalHours_P);
+                  }
+                }}
+                className="w-full h-8 rounded border border-slate-200 bg-white px-2 text-xs"
+              >
+                {courseList.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.code} - {c.title} ({c.programme} Sem {c.semester})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Section</label>
+                <select
+                  value={newSection}
+                  onChange={(e) => setNewSection(e.target.value)}
+                  className="w-full h-8 rounded border border-slate-200 bg-white px-2 text-xs"
+                >
+                  {sectionList.map((s) => (
+                    <option key={s.id} value={s.name}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Students</label>
+                <Input
+                  type="number"
+                  value={newStudents}
+                  onChange={(e) => setNewStudents(Number(e.target.value))}
+                  className="h-8 text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Theory (Hrs)</label>
+                <Input
+                  type="number"
+                  value={newTheoryHours}
+                  onChange={(e) => setNewTheoryHours(Number(e.target.value))}
+                  className="h-8 text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">Practical (Hrs)</label>
+                <Input
+                  type="number"
+                  value={newPracticalHours}
+                  onChange={(e) => setNewPracticalHours(Number(e.target.value))}
+                  className="h-8 text-xs"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">Main Faculty (Theory &amp; Lab)</label>
+              <select
+                value={newMainFacultyId}
+                onChange={(e) => setNewMainFacultyId(e.target.value)}
+                className="w-full h-8 rounded border border-slate-200 bg-white px-2 text-xs"
+              >
+                <option value="">-- Select Main Faculty --</option>
+                {facultyList.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="pt-3 flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setIsNewAllocModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleCreateNewAllocation} className="bg-[#002147] text-white">
+                Create Allocation
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </WorkloadShell>
   );
 }
-

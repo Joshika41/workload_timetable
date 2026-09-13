@@ -1,4 +1,4 @@
-﻿import os
+import os
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -262,7 +262,7 @@ def reject_preference(pref_id: int, current_user: User = Depends(get_current_use
 
 @app.get("/api/admin/faculty-list")
 def get_faculty_list(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role.value not in ["ADMIN"]:
+    if current_user.role.value not in ["ADMIN", "MASTER_ADMIN"]:
         raise HTTPException(status_code=403, detail="Only admins can view faculty list.")
     try:
         faculty_members = db.query(
@@ -761,4 +761,3 @@ async def upload_metadata(
 app.include_router(ingestion_router)
 app.include_router(departments_router)
 app.include_router(templates_router)
-

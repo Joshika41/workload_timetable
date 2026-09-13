@@ -1,379 +1,376 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect, useMemo } from "react";
-import { PortalShell } from "@/components/PortalShell";
-import { adminNav } from "@/components/portal-nav";
-import { useWorkspace } from "@/context/WorkspaceContext";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
-import api from "@/lib/api";
+import { createFileRoute } from '@tanstack/react-router';
+import { useState } from 'react';
+import { WorkloadShell } from '@/components/WorkloadShell';
+import { useWorkloadData } from '@/lib/workload-store';
+import { WorkloadStatusBadge } from '@/components/WorkloadStatusBadge';
+import { COURSE_CATEGORIES } from '@/lib/workload-types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
-  RefreshCw,
-  ShieldAlert,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  ClipboardList,
+  Search,
   CheckCircle2,
   Clock,
-  XCircle,
-  AlertTriangle,
-  ClipboardList,
-  Loader2,
-} from "lucide-react";
+  Eye,
+  SlidersHorizontal,
+  Users,
+  Sparkles,
+  BookOpen,
+  Mail,
+  ArrowLeft,
+} from 'lucide-react';
+import { toast } from 'sonner';
 
-export const Route = createFileRoute("/admin/preferences")({
-  component: PreferenceReview,
+export const Route = createFileRoute('/admin/preferences')({
+  component: AdminPreferencesReviewPage,
 });
 
-interface PreferenceRow {
-  id: string;
-  faculty_id: string;
-  faculty_name: string;
-  subject_code: string;
-  course_title?: string;
-  status: string;
-  submitted_at?: string;
-  has_conflict?: boolean;
-}
+function AdminPreferencesReviewPage() {
+  const {
+    allWorkloads,
+    preferences,
+    courseList,
+  } = useWorkloadData();
 
-function PreferenceReview() {
-  const { programType, setProgramType, semesterType, setSemesterType } =
-    useWorkspace();
+  const [searchTerm, setSearchTerm] = useState('');
+  const [programmeFilter, setProgrammeFilter] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'SUBMITTED' | 'PENDING'>('ALL');
 
-  const [preferences, setPreferences] = useState<PreferenceRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  // Selected faculty modal
+  const [selectedFacultyId, setSelectedFacultyId] = useState<string | null>(null);
+  const selectedFacultyWorkload = allWorkloads.find((w) => w.facultyId === selectedFacultyId);
+  const selectedSubmission = selectedFacultyId ? preferences[selectedFacultyId] : null;
 
-  const fetchPreferences = async () => {
-    setLoading(true);
-    try {
-      const res = await api.get("/api/admin/preferences", {
-        params: { program_type: programType, semester_type: semesterType },
-      });
-      setPreferences(
-        (res.data || []).map((item: any) => ({
-          id: item.id || `${item.faculty_id}_${item.subject_code}`,
-          faculty_id: item.faculty_id,
-          faculty_name: item.faculty_name || item.faculty_id,
-          subject_code: item.subject_code,
-          course_title: item.course_title || "",
-          status: item.status || "PENDING",
-          submitted_at: item.submitted_at,
-        }))
-      );
-    } catch (err: any) {
-      toast.error(
-        err.message || "Failed to fetch preferences."
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Compute summary stats
+  const totalFaculty = allWorkloads.length;
+  const submittedCount = allWorkloads.filter((w) => w.preferencesStatus === 'SUBMITTED').length;
+  const pendingCount = allWorkloads.filter((w) => w.preferencesStatus === 'PENDING').length;
+  const allocatedCount = allWorkloads.filter((w) => w.allocatedCoursesCount > 0).length;
 
-  useEffect(() => {
-    fetchPreferences();
-  }, [programType, semesterType]);
+  // Filtered rows
+  const filteredRows = allWorkloads.filter((w) => {
+    const matchesSearch =
+      w.facultyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      w.facultyId.toLowerCase().includes(searchTerm.toLowerCase());
 
-  // Conflict detection: subject_code selected by multiple faculty
-  const conflictSubjects = useMemo(() => {
-    const counts: Record<string, number> = {};
-    preferences.forEach((p) => {
-      counts[p.subject_code] = (counts[p.subject_code] || 0) + 1;
-    });
-    return new Set(
-      Object.entries(counts)
-        .filter(([, count]) => count > 1)
-        .map(([code]) => code)
-    );
-  }, [preferences]);
+    const matchesProg = programmeFilter === 'ALL' || w.programme === programmeFilter;
+    const matchesStatus =
+      statusFilter === 'ALL' ||
+      (statusFilter === 'SUBMITTED' && w.preferencesStatus === 'SUBMITTED') ||
+      (statusFilter === 'PENDING' && w.preferencesStatus === 'PENDING');
 
-  const handleStatusChange = async (
-    prefId: string,
-    newStatus: string
-  ) => {
-    setUpdatingId(prefId);
-    try {
-      await api.put(`/api/admin/preferences/${prefId}/status`, {
-        status: newStatus,
-      });
-      setPreferences((prev) =>
-        prev.map((p) => (p.id === prefId ? { ...p, status: newStatus } : p))
-      );
-      toast.success(`Status updated to ${newStatus}`);
-    } catch (err: any) {
-      toast.error(
-        err.message || "Failed to update status."
-      );
-    } finally {
-      setUpdatingId(null);
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status.toUpperCase()) {
-      case "APPROVED":
-        return (
-          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 border border-emerald-200 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 shadow-sm">
-            <CheckCircle2 className="size-3" /> Approved
-          </span>
-        );
-      case "DENIED":
-        return (
-          <span className="inline-flex items-center gap-1 rounded-full bg-red-100 border border-red-200 px-2.5 py-0.5 text-xs font-semibold text-red-700 shadow-sm">
-            <XCircle className="size-3" /> Denied
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-200 px-2.5 py-0.5 text-xs font-semibold text-amber-700 shadow-sm">
-            <Clock className="size-3" /> Pending
-          </span>
-        );
-    }
-  };
+    return matchesSearch && matchesProg && matchesStatus;
+  });
 
   return (
-    <PortalShell
+    <WorkloadShell
       role="admin"
-      title="Preference Review"
-      subtitle="Review faculty subject carts, resolve conflicts, and manage approvals"
-      nav={adminNav}
+      title="Faculty Preference Review"
+      subtitle="Examine faculty subject willingness, ranked course selections, and submission statuses"
+      actions={
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => window.history.back()}
+            className="h-8 gap-1 text-xs text-slate-500 hover:text-slate-800 border border-slate-200 bg-white"
+          >
+            <ArrowLeft className="size-3.5" />
+            <span>Back</span>
+          </Button>
+        </div>
+      }
     >
-      <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-        {/* Toolbar */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
-          <div className="flex items-center gap-4">
-            <ToggleGroup
-              type="single"
-              value={programType}
-              onValueChange={(v) => v && setProgramType(v)}
-              className="bg-muted p-1 rounded-xl"
-            >
-              <ToggleGroupItem
-                value="UG"
-                className="rounded-lg px-4 font-semibold text-sm data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm"
-              >
-                UG
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                value="PG"
-                className="rounded-lg px-4 font-semibold text-sm data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm"
-              >
-                PG
-              </ToggleGroupItem>
-            </ToggleGroup>
-            <ToggleGroup
-              type="single"
-              value={semesterType}
-              onValueChange={(v) => v && setSemesterType(v)}
-              className="bg-muted p-1 rounded-xl"
-            >
-              <ToggleGroupItem
-                value="Odd"
-                className="rounded-lg px-4 font-semibold text-sm data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm"
-              >
-                Odd
-              </ToggleGroupItem>
-              <ToggleGroupItem
-                value="Even"
-                className="rounded-lg px-4 font-semibold text-sm data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm"
-              >
-                Even
-              </ToggleGroupItem>
-            </ToggleGroup>
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* 1. TOP SUMMARY CARDS (Exact prompt section 16 values) */}
+      {/* ────────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {/* TOTAL FACULTY */}
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+            Total Faculty
+          </p>
+          <p className="text-3xl font-black text-slate-900 mt-1">{totalFaculty}</p>
+          <p className="text-[11px] text-slate-400 mt-0.5">MCA Department</p>
+        </div>
+
+        {/* SUBMITTED */}
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wider text-blue-700">
+            Submitted
+          </p>
+          <p className="text-3xl font-black text-blue-700 mt-1">{submittedCount}</p>
+          <p className="text-[11px] text-blue-600/80 mt-0.5">Preferences Received</p>
+        </div>
+
+        {/* PENDING */}
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wider text-amber-700">
+            Pending
+          </p>
+          <p className="text-3xl font-black text-amber-600 mt-1">{pendingCount}</p>
+          <p className="text-[11px] text-amber-600/80 mt-0.5">Awaiting Submission</p>
+        </div>
+
+        {/* ALLOCATED */}
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">
+            Allocated
+          </p>
+          <p className="text-3xl font-black text-emerald-600 mt-1">{allocatedCount}</p>
+          <p className="text-[11px] text-emerald-600/80 mt-0.5">Assigned Teaching</p>
+        </div>
+      </div>
+
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* 2. TABLE & FILTER CONTROLS */}
+      {/* ────────────────────────────────────────────────────────── */}
+      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+        {/* Filter bar */}
+        <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <ClipboardList className="size-4 text-[#002147]" />
+            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+              Faculty Preference Carts &amp; Allocation Status
+            </h3>
           </div>
-          <div className="flex items-center gap-3">
-            {conflictSubjects.size > 0 && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 border border-red-200 px-3 py-1 text-xs font-bold text-red-700 animate-pulse">
-                <ShieldAlert className="size-3.5" /> {conflictSubjects.size}{" "}
-                Conflict{conflictSubjects.size > 1 ? "s" : ""}
-              </span>
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={fetchPreferences}
-              disabled={loading}
-              className="gap-1.5 rounded-xl"
+
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+            <div className="relative flex-1 md:w-56">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-slate-400" />
+              <Input
+                placeholder="Search faculty name..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="h-8 pl-8 text-xs bg-white rounded-md"
+              />
+            </div>
+
+            <select
+              value={programmeFilter}
+              onChange={(e) => setProgrammeFilter(e.target.value)}
+              className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700"
             >
-              <RefreshCw
-                className={`size-3.5 ${loading ? "animate-spin" : ""}`}
-              />{" "}
-              Refresh
-            </Button>
+              <option value="ALL">All Programmes</option>
+              <option value="MCA">MCA</option>
+              <option value="MCA GEN AI">MCA GEN AI</option>
+            </select>
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700"
+            >
+              <option value="ALL">All Submission Statuses</option>
+              <option value="SUBMITTED">Submitted</option>
+              <option value="PENDING">Pending</option>
+            </select>
           </div>
         </div>
 
-        {/* Preference Table */}
-        <div className="rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left border-collapse">
-              <thead className="text-xs text-muted-foreground bg-muted/50 uppercase sticky top-0 z-10">
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs text-left border-collapse">
+            <thead className="text-[11px] font-bold text-slate-600 bg-slate-100 uppercase border-b border-slate-200">
+              <tr>
+                <th className="px-4 py-3">Faculty</th>
+                <th className="px-4 py-3">Programme</th>
+                <th className="px-4 py-3">Submitted Preferences</th>
+                <th className="px-4 py-3 text-center">Status</th>
+                <th className="px-4 py-3 text-center">Default Hrs</th>
+                <th className="px-4 py-3 text-center">Allocated</th>
+                <th className="px-4 py-3 text-center">Remaining</th>
+                <th className="px-4 py-3 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {filteredRows.length === 0 ? (
                 <tr>
-                  <th className="px-6 py-4 font-bold tracking-wider">
-                    Faculty
-                  </th>
-                  <th className="px-6 py-4 font-bold tracking-wider">
-                    Subject Code
-                  </th>
-                  <th className="px-6 py-4 font-bold tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-4 font-bold tracking-wider text-center">
-                    Actions
-                  </th>
+                  <td colSpan={8} className="py-8 text-center text-slate-500">
+                    No faculty records found.
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {loading ? (
-                  <tr>
-                    <td
-                      colSpan={4}
-                      className="px-6 py-16 text-center text-muted-foreground"
+              ) : (
+                filteredRows.map((w) => {
+                  const sub = preferences[w.facultyId];
+                  const hasPrefs = sub && sub.preferences.length > 0;
+
+                  return (
+                    <tr
+                      key={w.facultyId}
+                      className="hover:bg-blue-50/40 transition-colors"
                     >
-                      <Loader2 className="mx-auto size-8 animate-spin text-primary opacity-60 mb-3" />
-                      <p className="font-medium">Loading preference data...</p>
-                    </td>
-                  </tr>
-                ) : preferences.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-6 py-16 text-center">
-                      <div className="flex flex-col items-center justify-center opacity-60">
-                        <ClipboardList className="size-12 mb-3 text-muted-foreground" />
-                        <p className="font-semibold text-lg">
-                          No Preferences Submitted
-                        </p>
-                        <p className="text-sm mt-1">
-                          Faculty must log in and submit their subject carts
-                          first.
-                        </p>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  preferences.map((pref) => {
-                    const hasConflict = conflictSubjects.has(
-                      pref.subject_code
-                    );
-                    return (
-                      <tr
-                        key={pref.id}
-                        className={`group hover:bg-muted/30 transition-colors ${hasConflict ? "bg-red-50/40" : ""}`}
-                      >
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="size-8 rounded-full bg-gradient-to-tr from-primary/20 to-indigo-500/20 flex items-center justify-center font-bold text-primary shrink-0 text-xs">
-                              {pref.faculty_name.charAt(0).toUpperCase()}
-                            </div>
-                            <span className="font-semibold text-foreground">
-                              {pref.faculty_name}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex flex-col gap-1.5">
-                            <span className="font-mono text-xs font-bold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-md border border-indigo-200 inline-block w-fit shadow-sm">
-                              {pref.subject_code}
-                            </span>
-                            {hasConflict && (
-                              <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-md border border-red-200 w-fit shadow-sm animate-pulse">
-                                <ShieldAlert className="size-3" /> ⚠️ Conflict
+                      {/* Faculty Name */}
+                      <td className="px-4 py-3 font-semibold text-slate-900">
+                        <p className="font-bold text-slate-900">{w.facultyName}</p>
+                        <p className="text-[10px] text-slate-500 font-mono">{w.designation} · {w.facultyId}</p>
+                      </td>
+
+                      {/* Programme */}
+                      <td className="px-4 py-3 font-medium text-slate-700">
+                        {w.programme}
+                      </td>
+
+                      {/* Preferences List Pills */}
+                      <td className="px-4 py-3 max-w-xs">
+                        {hasPrefs ? (
+                          <div className="flex flex-wrap gap-1">
+                            {sub.preferences.slice(0, 3).map((p) => (
+                              <span
+                                key={p.courseCode}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-900 font-mono text-[10px]"
+                                title={p.courseTitle}
+                              >
+                                <strong className="text-blue-700 font-bold">#{p.rank}</strong>
+                                <span>{p.courseCode}</span>
+                              </span>
+                            ))}
+                            {sub.preferences.length > 3 && (
+                              <span className="text-[10px] text-slate-400 font-semibold self-center">
+                                +{sub.preferences.length - 3} more
                               </span>
                             )}
                           </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          {getStatusBadge(pref.status)}
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center justify-center gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={
-                                updatingId === pref.id ||
-                                pref.status === "APPROVED"
-                              }
-                              onClick={() =>
-                                handleStatusChange(pref.id, "APPROVED")
-                              }
-                              className="rounded-lg text-xs gap-1 border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 disabled:opacity-40"
-                            >
-                              <CheckCircle2 className="size-3" /> Approve
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={
-                                updatingId === pref.id ||
-                                pref.status === "PENDING"
-                              }
-                              onClick={() =>
-                                handleStatusChange(pref.id, "PENDING")
-                              }
-                              className="rounded-lg text-xs gap-1 border-amber-200 text-amber-700 hover:bg-amber-50 hover:text-amber-800 disabled:opacity-40"
-                            >
-                              <Clock className="size-3" /> Pending
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={
-                                updatingId === pref.id ||
-                                pref.status === "DENIED"
-                              }
-                              onClick={() =>
-                                handleStatusChange(pref.id, "DENIED")
-                              }
-                              className="rounded-lg text-xs gap-1 border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800 disabled:opacity-40"
-                            >
-                              <XCircle className="size-3" /> Deny
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                        ) : (
+                          <span className="text-slate-400 italic text-[11px]">
+                            No preferences submitted
+                          </span>
+                        )}
+                      </td>
 
-        {/* Conflict Summary */}
-        {conflictSubjects.size > 0 && (
-          <div className="rounded-2xl border border-red-200 bg-red-50/50 p-6 shadow-sm animate-in fade-in duration-500">
-            <div className="flex items-center gap-2 mb-4">
-              <AlertTriangle className="size-5 text-red-600" />
-              <h3 className="font-bold text-red-800">
-                Conflict Summary
-              </h3>
+                      {/* Status */}
+                      <td className="px-4 py-3 text-center">
+                        <WorkloadStatusBadge status={w.preferencesStatus} size="sm" />
+                      </td>
+
+                      {/* Default */}
+                      <td className="px-4 py-3 text-center font-mono font-bold text-slate-700">
+                        {w.defaultHours}h
+                      </td>
+
+                      {/* Allocated */}
+                      <td className="px-4 py-3 text-center font-mono font-bold text-blue-700">
+                        {w.allocatedHours}h
+                      </td>
+
+                      {/* Remaining */}
+                      <td className="px-4 py-3 text-center font-mono font-bold text-amber-700">
+                        {w.remainingHours}h
+                      </td>
+
+                      {/* Action */}
+                      <td className="px-4 py-3 text-right">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setSelectedFacultyId(w.facultyId)}
+                          className="h-7 px-2.5 text-xs text-[#002147] border-blue-200 bg-white hover:bg-blue-50 gap-1"
+                        >
+                          <Eye className="size-3.5" />
+                          <span>VIEW</span>
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* 3. FACULTY PREFERENCES DETAIL DIALOG */}
+      {/* ────────────────────────────────────────────────────────── */}
+      <Dialog open={!!selectedFacultyId} onOpenChange={(open) => !open && setSelectedFacultyId(null)}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between">
+              <span>{selectedFacultyWorkload?.facultyName} — Preferences</span>
+              {selectedFacultyWorkload && (
+                <WorkloadStatusBadge status={selectedFacultyWorkload.preferencesStatus} />
+              )}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedFacultyWorkload?.designation} · {selectedFacultyWorkload?.programme} · Submitted:{' '}
+              {selectedSubmission?.submittedAt || 'Pending'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-xs">
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex justify-between items-center text-xs">
+              <div>
+                <p className="text-[10px] text-slate-400 uppercase font-bold">Workload Status</p>
+                <p className="font-bold text-slate-800 text-sm">
+                  {selectedFacultyWorkload?.allocatedHours}h / {selectedFacultyWorkload?.defaultHours}h (Allocated / Default)
+                </p>
+              </div>
+              <WorkloadStatusBadge status={selectedFacultyWorkload?.status || 'UNDERLOADED'} />
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {Array.from(conflictSubjects).map((code) => {
-                const conflicting = preferences.filter(
-                  (p) => p.subject_code === code
-                );
-                return (
-                  <div
-                    key={code}
-                    className="rounded-xl border border-red-200 bg-white p-4 shadow-sm"
-                  >
-                    <p className="font-mono text-sm font-bold text-red-700 mb-2">
-                      {code}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Selected by:{" "}
-                      <span className="font-semibold text-foreground">
-                        {conflicting
-                          .map((c) => c.faculty_name)
-                          .join(", ")}
-                      </span>
-                    </p>
-                  </div>
-                );
-              })}
+
+            <div className="space-y-2">
+              <p className="font-bold uppercase tracking-wider text-slate-500 text-[11px]">
+                Ranked Subject Preferences
+              </p>
+
+              {!selectedSubmission || selectedSubmission.preferences.length === 0 ? (
+                <p className="p-4 rounded bg-slate-100 text-slate-500 text-center">
+                  This faculty has not selected any preferences yet.
+                </p>
+              ) : (
+                <div className="divide-y divide-slate-100 border rounded-lg overflow-hidden">
+                  {selectedSubmission.preferences.map((pref) => {
+                    const course = courseList.find((c) => c.code === pref.courseCode);
+                    const catInfo = course ? COURSE_CATEGORIES[course.category] : null;
+
+                    return (
+                      <div key={pref.courseCode} className="p-3 flex items-center justify-between hover:bg-slate-50">
+                        <div className="flex items-center gap-3">
+                          <span className="size-6 rounded-full bg-[#002147] text-white font-bold text-xs flex items-center justify-center shrink-0">
+                            {pref.rank}
+                          </span>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded text-[10px]">
+                                {pref.courseCode}
+                              </span>
+                              <span className="font-bold text-slate-900">{pref.courseTitle}</span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              {catInfo?.name} · Credits: {pref.credits} · Theory: {pref.theoryHours}h · Lab: {pref.practicalHours}h
+                            </p>
+                          </div>
+                        </div>
+
+                        <span className="font-bold text-xs text-slate-700">
+                          Rank #{pref.rank}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <Button
+                variant="outline"
+                onClick={() => setSelectedFacultyId(null)}
+                className="text-xs"
+              >
+                Close View
+              </Button>
             </div>
           </div>
-        )}
-      </div>
-    </PortalShell>
+        </DialogContent>
+      </Dialog>
+    </WorkloadShell>
   );
 }

@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
+import { ArrowLeft } from "lucide-react";
 import { PortalShell } from "@/components/PortalShell";
 import { adminNav } from "@/components/portal-nav";
 import { TimetableGrid } from "@/components/TimetableGrid";
@@ -68,8 +69,8 @@ function MasterTimetables() {
     
     allBlocks.forEach((block: any) => {
       if (block.section === section) {
-        if (block.day >= 0 && block.day < 5 && block.period >= 0 && block.period < 6) {
-          defaultGrid[block.day][block.period] = {
+        if (block.day >= 0 && block.day < 5 && block.period >= 0 && block.period < 6 && defaultGrid[block.day]) {
+          defaultGrid[block.day]![block.period] = {
             subject: block.subject,
             venue: "", // Backend might not have venues attached directly to the block yet
             faculty: block.faculty_id,
@@ -84,14 +85,14 @@ function MasterTimetables() {
   const exportPDF = () => {
     const element = document.getElementById("timetable-export-container");
     if (!element) return;
-    const opt = {
+    const opt: any = {
       margin: 0.5,
       filename: `timetable_${section}.pdf`,
       image: { type: "jpeg", quality: 0.98 },
       html2canvas: { scale: 2 },
       jsPDF: { unit: "in", format: "a4", orientation: "landscape" },
     };
-    html2pdf().set(opt).from(element).save();
+    (html2pdf() as any).set(opt).from(element).save();
   };
 
   return (
@@ -102,6 +103,17 @@ function MasterTimetables() {
       nav={adminNav}
     >
       <div className="space-y-5">
+        <div className="flex items-center justify-between">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => window.history.back()}
+            className="h-8 gap-1 text-xs text-muted-foreground hover:text-foreground border border-border bg-card"
+          >
+            <ArrowLeft className="size-3.5" />
+            <span>Back</span>
+          </Button>
+        </div>
         <div className="flex flex-wrap gap-2 rounded-xl border border-border bg-card p-3 shadow-[var(--shadow-card)]">
           {sections.length === 0 && <span className="text-sm text-muted-foreground p-2">No sections generated yet. Generate the timetable first.</span>}
           {sections.map((s: string) => (

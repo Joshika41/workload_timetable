@@ -66,8 +66,8 @@ function FacultyTimetable() {
       // Assuming session.name matches faculty_id or faculty name.
       // In a real app we'd use session.username/id.
       if (block.faculty_id === name || block.faculty_id.includes(name)) {
-        if (block.day >= 0 && block.day < 5 && block.period >= 0 && block.period < 6) {
-          defaultGrid[block.day][block.period] = {
+        if (block.day >= 0 && block.day < 5 && block.period >= 0 && block.period < 6 && defaultGrid[block.day]) {
+          defaultGrid[block.day]![block.period] = {
             subject: block.subject,
             venue: "",
             faculty: block.faculty_id,
@@ -85,8 +85,8 @@ function FacultyTimetable() {
     
     allBlocks.forEach((block: any) => {
       if (block.section === section) {
-        if (block.day >= 0 && block.day < 5 && block.period >= 0 && block.period < 6) {
-          defaultGrid[block.day][block.period] = {
+        if (block.day >= 0 && block.day < 5 && block.period >= 0 && block.period < 6 && defaultGrid[block.day]) {
+          defaultGrid[block.day]![block.period] = {
             subject: block.subject,
             venue: "",
             faculty: block.faculty_id,

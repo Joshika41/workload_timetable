@@ -12,9 +12,9 @@ import {
   Search,
   Clock,
   User,
-  ArrowRight,
   Loader2,
   History,
+  ArrowLeft,
 } from "lucide-react";
 
 export const Route = createFileRoute("/admin/audit")({
@@ -114,7 +114,17 @@ function AuditTrail() {
               className="pl-9 rounded-xl"
             />
           </div>
-          <Button
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => window.history.back()}
+              className="h-8 gap-1 text-xs text-slate-500 hover:text-slate-800 border border-slate-200 bg-white"
+            >
+              <ArrowLeft className="size-3.5" />
+              <span>Back</span>
+            </Button>
+            <Button
             variant="outline"
             size="sm"
             onClick={fetchLogs}
@@ -126,6 +136,7 @@ function AuditTrail() {
             />{" "}
             Refresh
           </Button>
+          </div>
         </div>
 
         {/* Audit Log Table */}

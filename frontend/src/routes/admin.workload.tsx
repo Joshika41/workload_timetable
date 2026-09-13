@@ -1,520 +1,633 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { createFileRoute } from '@tanstack/react-router';
+import { useState } from 'react';
+import { WorkloadShell } from '@/components/WorkloadShell';
+import { useWorkloadData } from '@/lib/workload-store';
+import { WorkloadStatusBadge } from '@/components/WorkloadStatusBadge';
+import { exportFacultyWorkloadToExcel, exportCourseAllocationToExcel } from '@/lib/excel-export';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   FileSpreadsheet,
-  Upload,
-  Loader2,
-  Sparkles,
-  CalendarCog,
+  Download,
+  Printer,
+  Search,
+  Users,
+  BookOpen,
+  Filter,
   CheckCircle2,
-} from "lucide-react";
-import { toast } from "sonner";
-import { PortalShell } from "@/components/PortalShell";
-import { adminNav } from "@/components/portal-nav";
-import { useAuth } from "@/lib/auth";
-import type { Faculty } from "@/lib/erp-data";
-import { useQuery } from "@tanstack/react-query";
-import api from "@/lib/api";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Progress } from "@/components/ui/progress";
+  AlertTriangle,
+  Building,
+  Plus,
+  Trash2,
+  Briefcase,
+  Eye,
+  Edit2,
+  Clock,
+  Check,
+  X,
+  ArrowLeft,
+} from 'lucide-react';
+import { toast } from 'sonner';
 
-export const Route = createFileRoute("/admin/workload")({
-  head: () => ({
-    meta: [
-      { title: "Workload Generation · Admin · SRM ERP" },
-      {
-        name: "description",
-        content:
-          "Upload syllabus and faculty data, configure theory, lab and incharge hours, then generate departmental workload matrices.",
-      },
-      { property: "og:title", content: "Workload Generation · Admin · SRM ERP" },
-      {
-        property: "og:description",
-        content: "Configure faculty hour allocation and generate university workload matrices.",
-      },
-    ],
-  }),
-  component: WorkloadPage,
+export const Route = createFileRoute('/admin/workload')({
+  component: AdminWorkloadSheetsPage,
 });
 
-const UPLOADS = [
-  { key: "syllabus", label: "Syllabus File", hint: "Course codes, credits, hour split" },
-  { key: "faculty", label: "Faculty List", hint: "Names, IDs, designations" },
-  { key: "rooms", label: "Classroom / Lab List", hint: "Capacity and lab equipment" },
-  { key: "hours", label: "Total Hours Reference", hint: "Max hours by designation" },
-] as const;
+function AdminWorkloadSheetsPage() {
+  const {
+    allWorkloads,
+    allocations,
+    facultyList,
+    campusWorkList,
+    addCampusWork,
+    removeCampusWork,
+    updateFacultyDefaultHours,
+  } = useWorkloadData();
 
-function total(f: any) {
-  return (f.theoryHours ?? f.theory_hours ?? 0) + (f.labHours ?? f.lab_hours ?? 0) + (f.inchargeHours ?? f.incharge_hours ?? 0);
-}
+  // Tab: "faculty-ledger" (Faculty Workload Ledger) vs "official-sheet" (Institutional Statement)
+  const [activeSheetTab, setActiveSheetTab] = useState<'faculty-ledger' | 'official-sheet'>('faculty-ledger');
 
-function UploadZone({ label, hint }: { label: string; hint: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border bg-muted/50 px-4 py-6 text-center opacity-80 cursor-default">
-      <FileSpreadsheet className="size-6 text-primary" />
-      <span className="text-sm font-medium text-foreground">{label}</span>
-      <span className="text-xs text-muted-foreground">{hint}</span>
-      <span className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary">
-        <CheckCircle2 className="size-3.5" /> Data Synced from Cloud
-      </span>
-    </div>
-  );
-}
+  const [searchTerm, setSearchTerm] = useState('');
+  const [programmeFilter, setProgrammeFilter] = useState('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'UNDERLOADED' | 'BALANCED' | 'OVERLOADED'>('ALL');
 
-function WorkloadPage() {
-  const { session, departmentLabs, fetchDepartments, toggleHasLabs } = useAuth();
-  
-  useEffect(() => {
-    fetchDepartments();
-  }, [fetchDepartments]);
+  // Campus Work Modal State
+  const [isCampusWorkModalOpen, setIsCampusWorkModalOpen] = useState(false);
+  const [campusFacultyId, setCampusFacultyId] = useState<string>(facultyList[0]?.id || 'FAC001');
+  const [campusHours, setCampusHours] = useState<number>(4);
+  const [campusDescription, setCampusDescription] = useState<string>('Department Administration');
 
-  const activeDepartment = session?.department || "MCA";
-  const hasLabs = departmentLabs[activeDepartment] ?? true;
+  // Selected Faculty Detail Modal
+  const [selectedFacultyId, setSelectedFacultyId] = useState<string | null>(null);
+  const selectedWorkload = allWorkloads.find((w) => w.facultyId === selectedFacultyId);
 
-  const [program, setProgram] = useState<"UG" | "PG">("PG");
-  const [scope, setScope] = useState("current");
-  const { data: fetchedFaculty, isLoading } = useQuery({
-    queryKey: ["faculty-list"],
-    queryFn: async () => {
-      const res = await api.get<Faculty[]>("/api/admin/faculty-list");
-      return res.data;
-    },
+  // Edit target hours state inside detail modal
+  const [editingTargetHours, setEditingTargetHours] = useState<number | null>(null);
+
+  // Filtered workloads
+  const filteredWorkloads = allWorkloads.filter((w) => {
+    const matchesSearch =
+      w.facultyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      w.facultyId.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      w.designation.toLowerCase().includes(searchTerm.toLowerCase());
+
+    const matchesProg = programmeFilter === 'ALL' || w.programme === programmeFilter;
+    const matchesStatus = statusFilter === 'ALL' || w.status === statusFilter;
+
+    return matchesSearch && matchesProg && matchesStatus;
   });
 
-  const { data: adminPreferences } = useQuery({
-    queryKey: ["admin-preferences"],
-    queryFn: async () => {
-      try {
-        const res = await api.get("/api/admin/preferences");
-        return res.data;
-      } catch (e) {
-        return [];
-      }
-    },
-  });
+  const handleExportFaculty = () => {
+    exportFacultyWorkloadToExcel(allWorkloads);
+    toast.success('Faculty Workload Excel sheet exported successfully!');
+  };
 
-  const [rows, setRows] = useState<Faculty[]>([]);
-  
-  // Sync fetched data into local editable rows state
-  useEffect(() => {
-    if (fetchedFaculty && rows.length === 0) {
-      setRows(fetchedFaculty);
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const handleSaveCampusWork = () => {
+    if (!campusFacultyId || campusHours <= 0 || !campusDescription.trim()) {
+      toast.error('Please enter valid campus work hours and description');
+      return;
     }
-  }, [fetchedFaculty]);
+    addCampusWork({
+      facultyId: campusFacultyId,
+      hours: campusHours,
+      description: campusDescription.trim(),
+    });
 
-  const [approved, setApproved] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [results, setResults] = useState<Faculty[] | null>(null);
+    const fac = facultyList.find((f) => f.id === campusFacultyId);
+    toast.success(`Added ${campusHours}h campus work for ${fac?.name}`);
+    setIsCampusWorkModalOpen(false);
+  };
 
-  function update(id: string, patch: Partial<Faculty>) {
-    setRows((prev) => prev.map((r: any) => ((r.id || r.faculty_id) === id ? { ...r, ...patch } : r)));
-  }
-
-  async function generate(all = false) {
-    setGenerating(true);
-    setProgress(8);
-    setResults(null);
-    
-    const timer = window.setInterval(() => {
-      setProgress((p) => (p >= 92 ? p : p + 11));
-    }, 180);
-
-    try {
-      if (all) {
-        const res = await api.post("/api/generate/timetables", {});
-        const taskId = res.data.task_id;
-        
-        if (!taskId) {
-            throw new Error("No task ID returned from background processor");
-        }
-        
-        let status = "PENDING";
-        let finalResult = null;
-        
-        while (status === "PENDING" || status === "PROCESSING") {
-            await new Promise(r => setTimeout(r, 3000));
-            const pollRes = await api.get(`/api/generate/status/${taskId}`);
-            status = pollRes.data.status;
-            finalResult = pollRes.data.result;
-            if (status === "PROCESSING") setProgress(p => p >= 90 ? p : p + 2);
-        }
-        
-        window.clearInterval(timer);
-        setProgress(100);
-        
-        if (status === "FAILED") {
-            throw new Error(finalResult?.detail || "Solver failed to generate timetable");
-        }
-        
-        toast.success("Timetables generated successfully!", {
-          description: `Backend Engine Status: ${finalResult?.status || 'Success'}`,
-        });
-      } else {
-        const payload = rows.map(r => ({
-          faculty_id: r.id || r.faculty_id,
-          department: r.department,
-          theory_hours: r.theoryHours,
-          lab_hours: r.labHours,
-          incharge_hours: r.inchargeHours,
-          max_hours_limit: r.maxHours
-        }));
-
-        const res = await api.post("/api/workload/allocate", payload);
-        
-        window.clearInterval(timer);
-        setProgress(100);
-        
-        if (res.data.workload) {
-          const newResults = res.data.workload.map((w: any) => ({
-            id: w.faculty_id,
-            name: rows.find(r => (r.id || r.faculty_id) === w.faculty_id)?.name || w.faculty_id,
-            department: w.department,
-            theoryHours: w.theory_hours,
-            labHours: w.lab_hours,
-            inchargeHours: w.incharge_hours,
-            maxHours: w.max_hours_limit
-          }));
-          setResults(newResults);
-        } else {
-          setResults(rows); 
-        }
-        
-        toast.success("Workload matrix generated", {
-          description: `Backend Engine Status: ${res.data.status || 'Success'}`,
-        });
-      }
-    } catch (err: any) {
-      window.clearInterval(timer);
-      const detail = err.message || err.message;
-      if (err.response?.status === 400 && detail) {
-        toast.error("Schedule mathematically impossible", { description: detail });
-      } else {
-        toast.error("Generation failed", { description: detail });
-      }
-    } finally {
-      setGenerating(false);
-    }
-  }
-
-  const handleExport = async () => {
-    try {
-      const response = await api.get('/api/export/timetable', { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', 'university_timetable.xlsx');
-      document.body.appendChild(link);
-      link.click();
-      link.parentNode?.removeChild(link);
-    } catch (err) {
-      toast.error("Export failed. Timetables may not be generated yet.");
+  const handleSaveTargetHours = () => {
+    if (selectedFacultyId && editingTargetHours !== null) {
+      updateFacultyDefaultHours(selectedFacultyId, editingTargetHours);
+      toast.success('Faculty workload target hours updated successfully');
+      setEditingTargetHours(null);
     }
   };
 
   return (
-    <PortalShell
+    <WorkloadShell
       role="admin"
-      title="Workload History & Generation"
-      subtitle={session?.department ?? "Department workspace"}
-      nav={adminNav}
-    >
-      <div className="space-y-6">
-        {/* Step 1 — uploads */}
-        <section className="rounded-xl border border-border bg-card p-5 shadow-[var(--shadow-card)] sm:p-6">
-          <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-primary">Step 1</p>
-              <h2 className="text-lg font-semibold text-foreground">Data Ingestion</h2>
-            </div>
-            <div className="flex flex-wrap items-end gap-4">
-              <div className="flex items-center gap-3 rounded-md border border-border px-3 py-2">
-                <span
-                  className={
-                    program === "UG" ? "text-sm font-semibold text-foreground" : "text-sm text-muted-foreground"
-                  }
-                >
-                  Undergraduate
-                </span>
-                <Switch
-                  checked={program === "PG"}
-                  onCheckedChange={(v) => setProgram(v ? "PG" : "UG")}
-                  aria-label="Toggle undergraduate or postgraduate"
-                />
-                <span
-                  className={
-                    program === "PG" ? "text-sm font-semibold text-foreground" : "text-sm text-muted-foreground"
-                  }
-                >
-                  Postgraduate
-                </span>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Syllabus scope</Label>
-                <Select value={scope} onValueChange={setScope}>
-                  <SelectTrigger className="w-56">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="whole">Whole Syllabus</SelectItem>
-                    <SelectItem value="current">Current Sem Syllabus</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {UPLOADS.map((u) => (
-              <UploadZone key={u.key} label={u.label} hint={u.hint} />
-            ))}
-          </div>
-        </section>
+      title="Faculty Workload Ledger & Reports"
+      subtitle="Complete institutional workload ledger including teaching allocations, campus work, and live reconciliation"
+      actions={
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => window.history.back()}
+            className="h-8 gap-1 text-xs text-slate-500 hover:text-slate-800 border border-slate-200 bg-white"
+          >
+            <ArrowLeft className="size-3.5" />
+            <span>Back</span>
+          </Button>
 
-        {/* Step 2 — faculty configuration */}
-        <section className="rounded-xl border border-border bg-card shadow-[var(--shadow-card)]">
-          <div className="border-b border-border px-5 py-4 sm:px-6">
-            <p className="text-xs font-semibold uppercase tracking-wider text-primary">Step 2</p>
-            <h2 className="text-lg font-semibold text-foreground">Faculty Configuration</h2>
-            <p className="text-sm text-muted-foreground">
-              Allocate theory, lab and incharge hours against each faculty member&apos;s maximum capacity.
+          <Button
+            size="sm"
+            onClick={() => setIsCampusWorkModalOpen(true)}
+            className="h-8 gap-1.5 text-xs bg-teal-700 hover:bg-teal-800 text-white font-bold"
+          >
+            <Plus className="size-3.5" />
+            <span>Add Campus Work</span>
+          </Button>
+
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handlePrint}
+            className="h-8 gap-1 text-xs border-slate-300 bg-white hover:bg-slate-100"
+          >
+            <Printer className="size-3.5 text-slate-700" />
+            <span className="hidden sm:inline">Print / PDF</span>
+          </Button>
+
+          <Button
+            size="sm"
+            onClick={handleExportFaculty}
+            className="h-8 gap-1.5 text-xs bg-[#002147] text-white"
+          >
+            <Download className="size-3.5 text-teal-300" />
+            <span>Export Workload (.xlsx)</span>
+          </Button>
+        </div>
+      }
+    >
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* 1. TAB SWITCHER & FILTERS */}
+      {/* ────────────────────────────────────────────────────────── */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-lg">
+          <button
+            onClick={() => setActiveSheetTab('faculty-ledger')}
+            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
+              activeSheetTab === 'faculty-ledger'
+                ? 'bg-[#002147] text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Users className="size-3.5" />
+            Faculty Workload Ledger
+          </button>
+
+          <button
+            onClick={() => setActiveSheetTab('official-sheet')}
+            className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
+              activeSheetTab === 'official-sheet'
+                ? 'bg-[#002147] text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <BookOpen className="size-3.5" />
+            Official Workload Statement
+          </button>
+        </div>
+
+        {/* Search & Filters */}
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <div className="relative flex-1 sm:w-48">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3 text-slate-400" />
+            <Input
+              placeholder="Search faculty name..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="h-8 pl-7 text-xs bg-slate-50"
+            />
+          </div>
+
+          <select
+            value={programmeFilter}
+            onChange={(e) => setProgrammeFilter(e.target.value)}
+            className="h-8 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs text-slate-700"
+          >
+            <option value="ALL">All Programmes</option>
+            <option value="MCA">MCA</option>
+            <option value="MCA GEN AI">MCA GEN AI</option>
+          </select>
+
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as any)}
+            className="h-8 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs text-slate-700"
+          >
+            <option value="ALL">All Statuses</option>
+            <option value="UNDERLOADED">Underloaded</option>
+            <option value="BALANCED">Balanced</option>
+            <option value="OVERLOADED">Overloaded</option>
+          </select>
+        </div>
+      </div>
+
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* 2. TAB A: FACULTY WORKLOAD LEDGER TABLE (Section 23 of prompt) */}
+      {/* ────────────────────────────────────────────────────────── */}
+      {activeSheetTab === 'faculty-ledger' && (
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+                Faculty Workload Master Ledger
+              </h3>
+              <p className="text-xs text-slate-500">
+                Formula: <strong className="text-blue-900">Total Credited = Teaching Hours + Campus Work Hours</strong>
+              </p>
+            </div>
+            <span className="text-xs font-mono text-slate-500 font-bold">
+              {filteredWorkloads.length} Faculty Records
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left border-collapse min-w-[1000px]">
+              <thead className="text-[11px] font-bold text-slate-600 bg-slate-100 uppercase border-b border-slate-200">
+                <tr>
+                  <th className="px-3.5 py-2.5 text-center w-12">S.No</th>
+                  <th className="px-3.5 py-2.5">Faculty Name</th>
+                  <th className="px-3.5 py-2.5">Designation</th>
+                  <th className="px-3.5 py-2.5 text-center">Target Hours</th>
+                  <th className="px-3.5 py-2.5 text-center">Teaching Hours</th>
+                  <th className="px-3.5 py-2.5 text-center">Campus Work</th>
+                  <th className="px-3.5 py-2.5 text-center">Total Credited</th>
+                  <th className="px-3.5 py-2.5 text-center">Remaining</th>
+                  <th className="px-3.5 py-2.5 text-center">Excess</th>
+                  <th className="px-3.5 py-2.5 text-center">Utilization %</th>
+                  <th className="px-3.5 py-2.5 text-center">Status</th>
+                  <th className="px-3.5 py-2.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {filteredWorkloads.map((w, idx) => (
+                  <tr
+                    key={w.facultyId}
+                    onClick={() => setSelectedFacultyId(w.facultyId)}
+                    className="hover:bg-blue-50/40 transition-colors cursor-pointer"
+                  >
+                    <td className="px-3.5 py-2.5 text-center font-bold text-slate-700 font-mono">
+                      {idx + 1}
+                    </td>
+
+                    <td className="px-3.5 py-2.5 font-bold text-slate-900">
+                      {w.facultyName}
+                      <span className="block text-[10px] text-slate-500 font-mono font-normal">
+                        {w.facultyId} · {w.programme}
+                      </span>
+                    </td>
+
+                    <td className="px-3.5 py-2.5 text-slate-600">{w.designation}</td>
+
+                    <td className="px-3.5 py-2.5 text-center font-mono font-bold text-slate-700">
+                      {w.defaultHours}h
+                    </td>
+
+                    <td className="px-3.5 py-2.5 text-center font-mono font-semibold text-blue-800">
+                      {w.teachingHours}h
+                    </td>
+
+                    <td className="px-3.5 py-2.5 text-center font-mono font-semibold text-teal-700">
+                      {w.campusWorkHours > 0 ? `${w.campusWorkHours}h` : '-'}
+                    </td>
+
+                    <td className="px-3.5 py-2.5 text-center font-mono font-black text-slate-900 bg-slate-50">
+                      {w.allocatedHours}h
+                    </td>
+
+                    <td className="px-3.5 py-2.5 text-center font-mono font-bold text-amber-700">
+                      {w.remainingHours}h
+                    </td>
+
+                    <td className="px-3.5 py-2.5 text-center font-mono font-bold text-rose-700">
+                      {w.overloadHours > 0 ? `+${w.overloadHours}h` : '0h'}
+                    </td>
+
+                    <td className="px-3.5 py-2.5 text-center font-mono font-bold text-slate-800">
+                      {w.utilizationPercentage}%
+                    </td>
+
+                    <td className="px-3.5 py-2.5 text-center">
+                      <WorkloadStatusBadge status={w.status} size="sm" />
+                    </td>
+
+                    <td className="px-3.5 py-2.5 text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedFacultyId(w.facultyId);
+                        }}
+                        className="h-7 px-2.5 text-xs text-blue-700 hover:bg-blue-100"
+                      >
+                        <Eye className="size-3.5 mr-1" /> View Breakdown
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* 3. TAB B: OFFICIAL WORKLOAD STATEMENT (Section 25 format) */}
+      {/* ────────────────────────────────────────────────────────── */}
+      {activeSheetTab === 'official-sheet' && (
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden p-6 space-y-6">
+          <div className="text-center space-y-1 border-b pb-4">
+            <h2 className="font-bold text-sm text-slate-800 tracking-wider uppercase">
+              SRM INSTITUTE OF SCIENCE AND TECHNOLOGY
+            </h2>
+            <h3 className="font-extrabold text-base text-[#002147]">
+              DEPARTMENT OF COMPUTER APPLICATIONS — MCA &amp; MCA GEN AI
+            </h3>
+            <p className="text-xs text-slate-500 font-medium">
+              FACULTY-WISE TEACHING WORKLOAD STATEMENT · ODD SEMESTER 2026-2027
             </p>
           </div>
-          <div className="overflow-x-auto min-h-[300px]">
-            <table className="w-full min-w-[980px] border-collapse text-sm">
-              <thead>
-                <tr className="bg-muted text-left">
-                  {[
-                    "Faculty Name",
-                    "Department",
-                    "Faculty ID",
-                    "Theory Hours",
-                    "Lab Hours",
-                    "Incharge Hours",
-                    "Total Limit",
-                    "Allocated",
-                    "Constraints"
-                  ].map((h) => (
-                    <th
-                      key={h}
-                      className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                    >
-                      {h}
-                    </th>
-                  ))}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-left border border-slate-300 border-collapse min-w-[900px]">
+              <thead className="bg-slate-100 text-[11px] font-bold text-slate-800 border-b border-slate-300 uppercase">
+                <tr>
+                  <th className="border border-slate-300 px-3 py-2 text-center w-12">S.No</th>
+                  <th className="border border-slate-300 px-3 py-2">Staff Name</th>
+                  <th className="border border-slate-300 px-3 py-2">Subject Code</th>
+                  <th className="border border-slate-300 px-3 py-2">Course Name</th>
+                  <th className="border border-slate-300 px-3 py-2">Class / Sec</th>
+                  <th className="border border-slate-300 px-3 py-2 text-center">Theory</th>
+                  <th className="border border-slate-300 px-3 py-2 text-center">Practical</th>
+                  <th className="border border-slate-300 px-3 py-2 text-center">Credited</th>
                 </tr>
               </thead>
               <tbody>
-                {isLoading ? (
-                  <tr>
-                    <td colSpan={9} className="py-8 text-center text-muted-foreground">
-                      <Loader2 className="mx-auto mb-2 size-5 animate-spin" />
-                      Loading faculty from database...
-                    </td>
-                  </tr>
-                ) : rows.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="py-8 text-center text-muted-foreground">
-                      No faculty found. Please seed the database.
-                    </td>
-                  </tr>
-                ) : rows.map((f: any) => {
-                  const fid = f.id || f.faculty_id;
-                  const used = total({ ...f, theoryHours: f.theoryHours ?? f.theory_hours, labHours: f.labHours ?? f.lab_hours, inchargeHours: f.inchargeHours ?? f.incharge_hours });
-                  const maxH = f.maxHours ?? f.max_hours_limit;
-                  const over = used > maxH;
-                  
-                  const prefs = adminPreferences?.filter((p: any) => p.faculty_id === fid) || [];
-                  const preferCount = prefs.filter((p: any) => p.preference_type === 'PREFER').length;
-                  const avoidCount = prefs.filter((p: any) => p.preference_type === 'AVOID').length;
+                {filteredWorkloads.map((faculty, fIdx) => {
+                  const subjectRows = faculty.allocatedSubjects;
+                  const rowCount = Math.max(1, subjectRows.length);
 
                   return (
-                    <tr key={fid} className="border-t border-border">
-                      <td className="whitespace-nowrap px-4 py-2.5 font-medium text-foreground">{f.name}</td>
-                      <td className="px-4 py-2.5 text-muted-foreground">{f.department}</td>
-                      <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{fid}</td>
-                      <td className="px-4 py-2.5">
-                        <HourSelect
-                          value={f.theoryHours ?? f.theory_hours ?? 0}
-                          options={[0, 1, 2, 4]}
-                          onChange={(v) => update(fid, { theoryHours: v })}
-                        />
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <HourSelect
-                          value={f.labHours ?? f.lab_hours ?? 0}
-                          options={[0, 2, 4]}
-                          onChange={(v) => update(fid, { labHours: v })}
-                        />
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <HourSelect
-                          value={f.inchargeHours ?? f.incharge_hours ?? 0}
-                          options={[0, 2]}
-                          onChange={(v) => update(fid, { inchargeHours: v })}
-                        />
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <HourSelect
-                          value={maxH}
-                          options={[12, 14, 16, 18, 20]}
-                          onChange={(v) => update(fid, { maxHours: v })}
-                        />
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-2.5">
-                        <Badge variant={over ? "destructive" : "secondary"} className="font-mono">
-                          {used} / {maxH}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        {prefs.length > 0 ? (
-                          <div className="flex gap-1.5 text-xs">
-                            {preferCount > 0 && <span className="text-emerald-600 font-medium">{preferCount} Prefer</span>}
-                            {avoidCount > 0 && <span className="text-destructive font-medium">{avoidCount} Avoid</span>}
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground text-xs italic">None</span>
-                        )}
-                      </td>
-                    </tr>
+                    <tbody key={faculty.facultyId} className="border-b-2 border-slate-300">
+                      {subjectRows.length === 0 ? (
+                        <tr>
+                          <td className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700">{fIdx + 1}</td>
+                          <td className="border border-slate-300 px-3 py-2 font-bold text-slate-900">{faculty.facultyName}</td>
+                          <td colSpan={6} className="border border-slate-300 px-3 py-2 text-center text-slate-400 italic">No teaching courses assigned</td>
+                        </tr>
+                      ) : (
+                        subjectRows.map((sub, sIdx) => (
+                          <tr key={sIdx} className="hover:bg-slate-50">
+                            {sIdx === 0 && (
+                              <td rowSpan={rowCount} className="border border-slate-300 px-3 py-2 text-center font-bold text-slate-700 align-top bg-slate-50/50">
+                                {fIdx + 1}
+                              </td>
+                            )}
+                            {sIdx === 0 && (
+                              <td rowSpan={rowCount} className="border border-slate-300 px-3 py-2 font-bold text-slate-900 align-top bg-slate-50/50">
+                                {faculty.facultyName}
+                                <span className="block text-[10px] text-slate-500 font-normal">{faculty.designation}</span>
+                              </td>
+                            )}
+                            <td className="border border-slate-300 px-3 py-2 font-mono font-bold text-blue-700">{sub.courseCode}</td>
+                            <td className="border border-slate-300 px-3 py-2 font-semibold text-slate-800">{sub.courseTitle}</td>
+                            <td className="border border-slate-300 px-3 py-2 font-medium text-slate-700">{sub.section}</td>
+                            <td className="border border-slate-300 px-3 py-2 text-center font-mono">{sub.theoryHours}</td>
+                            <td className="border border-slate-300 px-3 py-2 text-center font-mono">{sub.practicalHours}</td>
+                            <td className="border border-slate-300 px-3 py-2 text-center font-mono font-bold text-slate-900 bg-slate-50">{sub.totalHours}</td>
+                          </tr>
+                        ))
+                      )}
+
+                      {/* Summary Subtotal Row */}
+                      <tr className="bg-slate-100 font-bold text-slate-900 text-[11px]">
+                        <td colSpan={5} className="border border-slate-300 px-3 py-2 text-right uppercase">
+                          TOTAL FOR {faculty.facultyName} (TARGET: {faculty.defaultHours}H)
+                        </td>
+                        <td className="border border-slate-300 px-3 py-2 text-center font-mono">{faculty.theoryHours}</td>
+                        <td className="border border-slate-300 px-3 py-2 text-center font-mono">{faculty.practicalHours}</td>
+                        <td className="border border-slate-300 px-3 py-2 text-center font-mono font-black text-blue-900 bg-blue-100">
+                          {faculty.allocatedHours} hrs
+                        </td>
+                      </tr>
+                    </tbody>
                   );
                 })}
               </tbody>
             </table>
           </div>
-        </section>
+        </div>
+      )}
 
-        {/* Step 3 — actions */}
-        <section className="rounded-xl border border-border bg-card p-5 shadow-[var(--shadow-card)] sm:p-6">
-          <p className="text-xs font-semibold uppercase tracking-wider text-primary">Step 3</p>
-          <h2 className="text-lg font-semibold text-foreground">Approval &amp; Generation</h2>
-
-          <div className="mt-4 flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-3 rounded-md border border-border px-4 py-3">
-              <Switch id="approve" checked={approved} onCheckedChange={setApproved} />
-              <Label htmlFor="approve" className="cursor-pointer text-sm font-medium">
-                Approve Workload
-              </Label>
-            </div>
-            <Button size="lg" disabled={!approved || generating} onClick={() => generate(false)}>
-              {generating ? (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              ) : (
-                <Sparkles className="mr-2 size-4" />
-              )}
-              Generate Workload
-            </Button>
-            <Button
-              size="lg"
-              variant="secondary"
-              disabled={!approved || generating}
-              onClick={() => generate(true)}
-            >
-              {generating ? (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              ) : (
-                <CalendarCog className="mr-2 size-4" />
-              )}
-              Generate All Timetables
-            </Button>
-            <Button
-              size="lg"
-              variant="outline"
-              onClick={handleExport}
-              className="bg-green-500/10 text-green-600 hover:bg-green-500/20 hover:text-green-700 border-green-500/20"
-            >
-              <FileSpreadsheet className="mr-2 size-4" />
-              Export to Excel
-            </Button>
-            {!approved ? (
-              <span className="text-sm text-muted-foreground">
-                Enable approval to unlock generation.
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* 4. FACULTY WORKLOAD DETAIL BREAKDOWN MODAL (Section 24) */}
+      {/* ────────────────────────────────────────────────────────── */}
+      <Dialog open={!!selectedFacultyId} onOpenChange={(open) => !open && setSelectedFacultyId(null)}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between">
+              <span className="text-base font-extrabold text-slate-900">
+                {selectedWorkload?.facultyName}
               </span>
-            ) : null}
-          </div>
+              {selectedWorkload && <WorkloadStatusBadge status={selectedWorkload.status} />}
+            </DialogTitle>
+            <DialogDescription>
+              {selectedWorkload?.designation} · {selectedWorkload?.programme} · ID: {selectedWorkload?.facultyId}
+            </DialogDescription>
+          </DialogHeader>
 
-          {generating ? (
-            <div className="mt-5 rounded-lg border border-border bg-muted/50 p-4">
-              <p className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <Loader2 className="size-4 animate-spin text-primary" /> Building allocation matrix…
-              </p>
-              <Progress value={progress} className="mt-3" />
-            </div>
-          ) : null}
-
-          {results ? (
-            <div className="mt-5 overflow-hidden rounded-lg border border-border">
-              <div className="flex items-center gap-2 border-b border-border bg-muted px-4 py-3">
-                <CheckCircle2 className="size-4 text-primary" />
-                <p className="text-sm font-semibold text-foreground">Computed Workload Preview</p>
+          {selectedWorkload && (
+            <div className="space-y-4 py-2 text-xs">
+              {/* Summary Metrics Cards */}
+              <div className="grid grid-cols-4 gap-2 bg-slate-50 p-3 rounded-lg border border-slate-200 text-center">
+                <div>
+                  <p className="text-[10px] uppercase font-bold text-slate-400">Target Workload</p>
+                  <p className="text-lg font-black text-slate-800">{selectedWorkload.defaultHours} hrs</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase font-bold text-slate-400">Teaching Hours</p>
+                  <p className="text-lg font-black text-blue-700">{selectedWorkload.teachingHours} hrs</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase font-bold text-slate-400">Campus Work</p>
+                  <p className="text-lg font-black text-teal-700">{selectedWorkload.campusWorkHours} hrs</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase font-bold text-slate-400">Total Credited</p>
+                  <p className="text-lg font-black text-slate-900">{selectedWorkload.allocatedHours} hrs</p>
+                </div>
               </div>
-              <table className="w-full min-w-[520px] border-collapse text-sm">
-                <thead>
-                  <tr className="bg-background text-left">
-                    {["Faculty", "Theory", "Lab", "Incharge", "Total Computed"].map((h) => (
-                      <th
-                        key={h}
-                        className="px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {results.map((f) => (
-                    <tr key={f.id} className="border-t border-border">
-                      <td className="px-4 py-2.5 font-medium text-foreground">{f.name}</td>
-                      <td className="px-4 py-2.5 text-muted-foreground">{f.theoryHours} hrs</td>
-                      {hasLabs && <td className="px-4 py-2.5 text-muted-foreground">{f.labHours} hrs</td>}
-                      <td className="px-4 py-2.5 text-muted-foreground">{f.inchargeHours} hrs</td>
-                      <td className="px-4 py-2.5">
-                        <Badge className="font-mono">
-                          {total(f)} / {f.maxHours}
-                        </Badge>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </section>
-      </div>
-    </PortalShell>
-  );
-}
 
-function HourSelect({
-  value,
-  options,
-  onChange,
-}: {
-  value: number;
-  options: number[];
-  onChange: (v: number) => void;
-}) {
-  return (
-    <Select value={String(value)} onValueChange={(v) => onChange(Number(v))}>
-      <SelectTrigger className="w-24">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {options.map((o) => (
-          <SelectItem key={o} value={String(o)}>
-            {o} hr
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+              {/* Teaching Allocation Breakdown */}
+              <div className="space-y-2">
+                <h4 className="font-bold uppercase tracking-wider text-slate-600 text-[11px]">
+                  TEACHING ALLOCATION
+                </h4>
+                {selectedWorkload.allocatedSubjects.length === 0 ? (
+                  <p className="p-3 bg-slate-50 border rounded text-slate-400 text-center italic">
+                    No teaching subjects assigned.
+                  </p>
+                ) : (
+                  <div className="border border-slate-200 rounded-lg overflow-hidden divide-y divide-slate-100">
+                    {selectedWorkload.allocatedSubjects.map((sub, i) => (
+                      <div key={i} className="p-3 flex items-center justify-between hover:bg-slate-50">
+                        <div>
+                          <span className="font-mono font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded text-[10px] mr-2">
+                            {sub.courseCode}
+                          </span>
+                          <span className="font-semibold text-slate-900">{sub.courseTitle}</span>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            Section: <strong>{sub.section}</strong> · Role: <strong>{sub.role}</strong>
+                          </p>
+                        </div>
+                        <div className="text-right font-mono">
+                          <span className="font-bold text-slate-900 text-xs">
+                            {sub.theoryHours}h (T) + {sub.practicalHours}h (P)
+                          </span>
+                          <p className="text-[10px] text-slate-500 font-bold">Total: {sub.totalHours} hrs</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Campus Work List */}
+              <div className="space-y-2 pt-2 border-t">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold uppercase tracking-wider text-teal-800 text-[11px]">
+                    CAMPUS WORK RESPONSIBILITIES
+                  </h4>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setCampusFacultyId(selectedWorkload.facultyId);
+                      setIsCampusWorkModalOpen(true);
+                    }}
+                    className="h-6 px-2 text-[11px] border-teal-300 text-teal-800 bg-teal-50"
+                  >
+                    + Add Campus Work
+                  </Button>
+                </div>
+
+                {selectedWorkload.campusWorkEntries.length === 0 ? (
+                  <p className="p-3 bg-slate-50 border rounded text-slate-400 text-center italic">
+                    No administrative or campus work duties assigned.
+                  </p>
+                ) : (
+                  <div className="border border-slate-200 rounded-lg overflow-hidden divide-y divide-slate-100">
+                    {selectedWorkload.campusWorkEntries.map((cw) => (
+                      <div key={cw.id} className="p-2.5 flex items-center justify-between bg-teal-50/30">
+                        <div>
+                          <p className="font-bold text-slate-900">{cw.description}</p>
+                          <p className="text-[10px] text-teal-700">Institutional / Department Duty</p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono font-extrabold text-teal-900">{cw.hours} hrs</span>
+                          <button
+                            onClick={() => {
+                              removeCampusWork(cw.id);
+                              toast.success('Campus work entry removed');
+                            }}
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Workload Reconciliation */}
+              <div className="p-3 bg-slate-900 text-white rounded-lg flex items-center justify-between text-xs">
+                <span>
+                  Target: <strong>{selectedWorkload.defaultHours}h</strong> · Credited: <strong>{selectedWorkload.allocatedHours}h</strong>
+                </span>
+                <span className="font-bold text-teal-300">
+                  {selectedWorkload.remainingHours > 0
+                    ? `${selectedWorkload.remainingHours}h UNDERLOADED`
+                    : selectedWorkload.overloadHours > 0
+                    ? `+${selectedWorkload.overloadHours}h OVERLOADED`
+                    : '✓ RECONCILED & BALANCED'}
+                </span>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ────────────────────────────────────────────────────────── */}
+      {/* 5. ADD CAMPUS WORK MODAL */}
+      {/* ────────────────────────────────────────────────────────── */}
+      <Dialog open={isCampusWorkModalOpen} onOpenChange={setIsCampusWorkModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-teal-800">
+              <Briefcase className="size-5 text-teal-600" /> Add Campus Work Responsibility
+            </DialogTitle>
+            <DialogDescription>
+              Campus work hours contribute to total credited workload (e.g. HOD duties, committee work, examination work).
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-xs">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 mb-1">Select Faculty Member</label>
+              <select
+                value={campusFacultyId}
+                onChange={(e) => setCampusFacultyId(e.target.value)}
+                className="w-full h-8 rounded border border-slate-200 bg-white px-2 text-xs font-semibold"
+              >
+                {facultyList.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name} ({f.designation})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 mb-1">Campus Work Hours</label>
+              <Input
+                type="number"
+                value={campusHours}
+                onChange={(e) => setCampusHours(Number(e.target.value))}
+                className="h-8 text-xs font-mono font-bold"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 mb-1">Campus Work Description / Remark</label>
+              <Input
+                value={campusDescription}
+                onChange={(e) => setCampusDescription(e.target.value)}
+                placeholder="e.g., Department Administration, Placement Officer"
+                className="h-8 text-xs"
+              />
+            </div>
+
+            <div className="pt-3 flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setIsCampusWorkModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={handleSaveCampusWork} className="bg-teal-700 hover:bg-teal-800 text-white font-bold">
+                Save Campus Work
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </WorkloadShell>
   );
 }

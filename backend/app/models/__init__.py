@@ -1,0 +1,22 @@
+from .domain import (
+    Base,
+    RoleEnum,
+    SemesterTypeEnum,
+    PreferenceStatusEnum,
+    AllocationStatusEnum,
+    AllocationRoleEnum,
+    Institution,
+    Department,
+    Programme,
+    User,
+    FacultyProfile,
+    AcademicYear,
+    Subject,
+    CurriculumOffering,
+    Section,
+    PreferenceSubmission,
+    PreferenceItem,
+    SubjectAllocation,
+    AllocationComponent,
+    AuditLog
+)

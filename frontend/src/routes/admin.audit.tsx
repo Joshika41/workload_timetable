@@ -14,6 +14,8 @@ import {
   User,
   Loader2,
   History,
+  ShieldAlert,
+  ArrowRight,
   ArrowLeft,
 } from "lucide-react";
 

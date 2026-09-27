@@ -1,20 +1,17 @@
-from database import SessionLocal, FacultyPreference
+﻿from sqlalchemy.orm import Session
+from app.database.connection import SessionLocal
+from app.models.domain import AcademicWorkspace, User, Department
 
-def check_db():
-    db = SessionLocal()
-    try:
-        prefs = db.query(FacultyPreference).all()
-        if not prefs:
-            print("No preferences found in the database.")
-            return
-            
-        print(f"Found {len(prefs)} preference(s):")
-        print("-" * 50)
-        for p in prefs:
-            print(f"Faculty ID: {p.faculty_id} | Subject: {p.subject_name} | Status: {p.status}")
-        print("-" * 50)
-    finally:
-        db.close()
+db = SessionLocal()
 
-if __name__ == "__main__":
-    check_db()
+print("--- DEPARTMENTS ---")
+for d in db.query(Department).all():
+    print(d.id, d.name)
+
+print("\n--- USERS ---")
+for u in db.query(User).all():
+    print(u.id, u.email, u.department_id)
+
+print("\n--- WORKSPACES ---")
+for w in db.query(AcademicWorkspace).all():
+    print(w.id, w.department_id, w.programme_name)

@@ -1,14 +1,23 @@
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 
+export type CanonicalWorkspace = {
+  workspace_id: string;
+  department_id: number;
+  department_name: string;
+  programme_id: number;
+  programme_name: string;
+  programme_year: number;
+  academic_year_id: number;
+  academic_year_name: string;
+  semester: number;
+  semester_type: string;
+  workflow_state?: string;
+  sections: { id: number; name: string }[];
+};
+
 type WorkspaceContextType = {
-  activeDepartmentId: number | null;
-  setActiveDepartmentId: (id: number | null) => void;
-  programType: string;
-  setProgramType: (type: string) => void;
-  semesterType: string;
-  setSemesterType: (type: string) => void;
-  activeDepartmentName: string | null;
-  setActiveDepartmentName: (name: string | null) => void;
+  activeWorkspace: CanonicalWorkspace | null;
+  setActiveWorkspace: (workspace: CanonicalWorkspace | null) => void;
   isAllocationLocked: boolean;
   setIsAllocationLocked: (locked: boolean) => void;
 };
@@ -16,56 +25,25 @@ type WorkspaceContextType = {
 const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined);
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  // Try to load from localStorage to persist across reloads (only on client)
-  const [activeDepartmentId, setActiveDepartmentIdState] = useState<number | null>(() => {
+  const [activeWorkspace, setActiveWorkspaceState] = useState<CanonicalWorkspace | null>(() => {
     if (typeof window === 'undefined') return null;
-    const saved = localStorage.getItem('workspace_dept_id');
-    return saved ? parseInt(saved, 10) : null;
+    const saved = localStorage.getItem('active_workspace');
+    return saved ? JSON.parse(saved) : null;
   });
-  const [activeDepartmentName, setActiveDepartmentNameState] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null;
-    return localStorage.getItem('workspace_dept_name') || null;
-  });
-  const [programType, setProgramTypeState] = useState<string>(() => {
-    if (typeof window === 'undefined') return 'UG';
-    return localStorage.getItem('workspace_prog') || 'UG';
-  });
-  const [semesterType, setSemesterTypeState] = useState<string>(() => {
-    if (typeof window === 'undefined') return 'Odd';
-    return localStorage.getItem('workspace_sem') || 'Odd';
-  });
+
   const [isAllocationLocked, setIsAllocationLockedState] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem('workspace_locked') === 'true';
   });
 
-  // Custom setters that also update localStorage (only on client)
-  const setActiveDepartmentId = (id: number | null) => {
-    setActiveDepartmentIdState(id);
+  const setActiveWorkspace = (workspace: CanonicalWorkspace | null) => {
+    setActiveWorkspaceState(workspace);
     if (typeof window !== 'undefined') {
-      if (id) localStorage.setItem('workspace_dept_id', id.toString());
-      else localStorage.removeItem('workspace_dept_id');
+      if (workspace) localStorage.setItem('active_workspace', JSON.stringify(workspace));
+      else localStorage.removeItem('active_workspace');
     }
   };
 
-  const setActiveDepartmentName = (name: string | null) => {
-    setActiveDepartmentNameState(name);
-    if (typeof window !== 'undefined') {
-      if (name) localStorage.setItem('workspace_dept_name', name);
-      else localStorage.removeItem('workspace_dept_name');
-    }
-  };
-
-  const setProgramType = (type: string) => {
-    setProgramTypeState(type);
-    if (typeof window !== 'undefined') localStorage.setItem('workspace_prog', type);
-  };
-
-  const setSemesterType = (type: string) => {
-    setSemesterTypeState(type);
-    if (typeof window !== 'undefined') localStorage.setItem('workspace_sem', type);
-  };
-  
   const setIsAllocationLocked = (locked: boolean) => {
     setIsAllocationLockedState(locked);
     if (typeof window !== 'undefined') localStorage.setItem('workspace_locked', locked.toString());
@@ -73,10 +51,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   return (
     <WorkspaceContext.Provider value={{
-      activeDepartmentId, setActiveDepartmentId,
-      activeDepartmentName, setActiveDepartmentName,
-      programType, setProgramType,
-      semesterType, setSemesterType,
+      activeWorkspace, setActiveWorkspace,
       isAllocationLocked, setIsAllocationLocked
     }}>
       {children}

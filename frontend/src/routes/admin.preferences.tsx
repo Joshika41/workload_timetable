@@ -1,374 +1,334 @@
-import { createFileRoute } from '@tanstack/react-router';
-import { useState } from 'react';
-import { WorkloadShell } from '@/components/WorkloadShell';
-import { useWorkloadData } from '@/lib/workload-store';
-import { WorkloadStatusBadge } from '@/components/WorkloadStatusBadge';
-import { COURSE_CATEGORIES } from '@/lib/workload-types';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+﻿import { createFileRoute } from "@tanstack/react-router";
+import { useState, useEffect } from "react";
+import { WorkloadShell } from "@/components/WorkloadShell";
+import { useWorkspace } from "@/context/WorkspaceContext";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  ClipboardList,
-  Search,
-  CheckCircle2,
-  Clock,
-  Eye,
-  SlidersHorizontal,
-  Users,
-  Sparkles,
-  BookOpen,
-  Mail,
-  ArrowLeft,
-} from 'lucide-react';
-import { toast } from 'sonner';
+} from "@/components/ui/dialog";
+import { Search, CheckCircle2, AlertCircle, XCircle, Clock } from "lucide-react";
+import { toast } from "sonner";
+import { preferenceApi } from "@/api/preferenceApi";
+import { apiClient } from "@/api/client";
 
-export const Route = createFileRoute('/admin/preferences')({
+export const Route = createFileRoute("/admin/preferences")({
   component: AdminPreferencesReviewPage,
 });
 
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, { bg: string; text: string; icon: React.ReactNode }> = {
+    SUBMITTED:     { bg: "bg-blue-100 text-blue-700",    icon: <CheckCircle2 className="size-3.5" />,  text: "Submitted" },
+    NOT_SUBMITTED: { bg: "bg-slate-100 text-slate-500",   icon: <AlertCircle className="size-3.5" />,   text: "Not Submitted" },
+    APPROVED:      { bg: "bg-emerald-100 text-emerald-700", icon: <CheckCircle2 className="size-3.5" />, text: "Approved" },
+    PENDING:       { bg: "bg-amber-100 text-amber-700",  icon: <Clock className="size-3.5" />,          text: "Pending" },
+    DENIED:        { bg: "bg-red-100 text-red-700",       icon: <XCircle className="size-3.5" />,       text: "Denied" },
+  };
+  const cfg = map[status] || map["PENDING"];
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${cfg.bg}`}>
+      {cfg.icon} {cfg.text}
+    </span>
+  );
+}
+
+function CategoryBadge({ category }: { category: string }) {
+  return (
+    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+      category === "CORE" ? "bg-indigo-100 text-indigo-700" : "bg-fuchsia-100 text-fuchsia-700"
+    }`}>
+      {category}
+    </span>
+  );
+}
+
 function AdminPreferencesReviewPage() {
-  const {
-    allWorkloads,
-    preferences,
-    courseList,
-  } = useWorkloadData();
+  const { activeWorkspace } = useWorkspace();
+  const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [submissions, setSubmissions] = useState<any[]>([]);
+  const [allFaculty, setAllFaculty] = useState<any[]>([]);
+  const [selectedSubmission, setSelectedSubmission] = useState<any | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const isFinalized = activeWorkspace?.workflow_state === "FINALIZED";
 
-  const [searchTerm, setSearchTerm] = useState('');
-  const [programmeFilter, setProgrammeFilter] = useState('ALL');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'SUBMITTED' | 'PENDING'>('ALL');
+  const fetchData = () => {
+    if (!activeWorkspace) return;
+    preferenceApi.getAllPreferences(activeWorkspace.workspace_id)
+      .then(setSubmissions)
+      .catch(console.error);
+    apiClient.get("/faculty", { params: { department_id: activeWorkspace.department_id } })
+      .then((r) => setAllFaculty(r.data))
+      .catch(console.error);
+  };
 
-  // Selected faculty modal
-  const [selectedFacultyId, setSelectedFacultyId] = useState<string | null>(null);
-  const selectedFacultyWorkload = allWorkloads.find((w) => w.facultyId === selectedFacultyId);
-  const selectedSubmission = selectedFacultyId ? preferences[selectedFacultyId] : null;
+  useEffect(() => { fetchData(); }, [activeWorkspace]);
 
-  // Compute summary stats
-  const totalFaculty = allWorkloads.length;
-  const submittedCount = allWorkloads.filter((w) => w.preferencesStatus === 'SUBMITTED').length;
-  const pendingCount = allWorkloads.filter((w) => w.preferencesStatus === 'PENDING').length;
-  const allocatedCount = allWorkloads.filter((w) => w.allocatedCoursesCount > 0).length;
-
-  // Filtered rows
-  const filteredRows = allWorkloads.filter((w) => {
-    const matchesSearch =
-      w.facultyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      w.facultyId.toLowerCase().includes(searchTerm.toLowerCase());
-
-    const matchesProg = programmeFilter === 'ALL' || w.programme === programmeFilter;
-    const matchesStatus =
-      statusFilter === 'ALL' ||
-      (statusFilter === 'SUBMITTED' && w.preferencesStatus === 'SUBMITTED') ||
-      (statusFilter === 'PENDING' && w.preferencesStatus === 'PENDING');
-
-    return matchesSearch && matchesProg && matchesStatus;
+  // Build combined rows: submitted faculty + not-submitted faculty
+  const rows = allFaculty.map((fac) => {
+    const sub = submissions.find((s) => s.faculty_name === fac.name || s.faculty_id === fac.id);
+    return {
+      faculty_id: fac.id,
+      faculty_name: fac.name,
+      designation: fac.designation,
+      submission: sub || null,
+      submission_status: sub ? "SUBMITTED" : "NOT_SUBMITTED",
+      review_status: sub?.review_status || "-",
+      num_prefs: sub ? sub.items.length : 0,
+    };
   });
+
+  const filtered = rows.filter((r) => {
+    const matchSearch = r.faculty_name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchStatus =
+      statusFilter === "ALL" ||
+      (statusFilter === "SUBMITTED" && r.submission_status === "SUBMITTED") ||
+      (statusFilter === "NOT_SUBMITTED" && r.submission_status === "NOT_SUBMITTED") ||
+      (statusFilter === "APPROVED" && r.review_status === "APPROVED") ||
+      (statusFilter === "PENDING" && r.review_status === "PENDING");
+    return matchSearch && matchStatus;
+  });
+
+  const handleReview = async (submissionId: number, review_status: string) => {
+    if (isFinalized) {
+      toast.error("Cannot update review: workspace is finalized.");
+      return;
+    }
+    setIsUpdating(true);
+    try {
+      await preferenceApi.reviewSubmission(submissionId, review_status);
+      toast.success(`Marked as ${review_status}`);
+      fetchData();
+      if (selectedSubmission?.id === submissionId) {
+        setSelectedSubmission((prev: any) => prev ? { ...prev, review_status } : prev);
+      }
+    } catch {
+      toast.error("Failed to update review");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
 
   return (
     <WorkloadShell
       role="admin"
-      title="Faculty Preference Review"
-      subtitle="Examine faculty subject willingness, ranked course selections, and submission statuses"
-      actions={
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => window.history.back()}
-            className="h-8 gap-1 text-xs text-slate-500 hover:text-slate-800 border border-slate-200 bg-white"
-          >
-            <ArrowLeft className="size-3.5" />
-            <span>Back</span>
-          </Button>
-        </div>
-      }
+      title="Faculty Preferences"
+      subtitle="View and review faculty submitted preferences"
     >
-      {/* ────────────────────────────────────────────────────────── */}
-      {/* 1. TOP SUMMARY CARDS (Exact prompt section 16 values) */}
-      {/* ────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {/* TOTAL FACULTY */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
-            Total Faculty
-          </p>
-          <p className="text-3xl font-black text-slate-900 mt-1">{totalFaculty}</p>
-          <p className="text-[11px] text-slate-400 mt-0.5">MCA Department</p>
+      <div className="space-y-6">
+        {/* Summary bar */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {[
+            { label: "Total Faculty", val: allFaculty.length, color: "text-slate-800" },
+            { label: "Submitted", val: submissions.length, color: "text-blue-700" },
+            { label: "Not Submitted", val: allFaculty.length - submissions.length, color: "text-amber-600" },
+            { label: "Approved", val: submissions.filter(s => s.review_status === "APPROVED").length, color: "text-emerald-700" },
+          ].map((s) => (
+            <div key={s.label} className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+              <p className="text-xs font-semibold text-slate-500 mb-1">{s.label}</p>
+              <p className={`text-2xl font-black ${s.color}`}>{s.val}</p>
+            </div>
+          ))}
         </div>
 
-        {/* SUBMITTED */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-xs font-bold uppercase tracking-wider text-blue-700">
-            Submitted
-          </p>
-          <p className="text-3xl font-black text-blue-700 mt-1">{submittedCount}</p>
-          <p className="text-[11px] text-blue-600/80 mt-0.5">Preferences Received</p>
-        </div>
-
-        {/* PENDING */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-xs font-bold uppercase tracking-wider text-amber-700">
-            Pending
-          </p>
-          <p className="text-3xl font-black text-amber-600 mt-1">{pendingCount}</p>
-          <p className="text-[11px] text-amber-600/80 mt-0.5">Awaiting Submission</p>
-        </div>
-
-        {/* ALLOCATED */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">
-            Allocated
-          </p>
-          <p className="text-3xl font-black text-emerald-600 mt-1">{allocatedCount}</p>
-          <p className="text-[11px] text-emerald-600/80 mt-0.5">Assigned Teaching</p>
-        </div>
-      </div>
-
-      {/* ────────────────────────────────────────────────────────── */}
-      {/* 2. TABLE & FILTER CONTROLS */}
-      {/* ────────────────────────────────────────────────────────── */}
-      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-        {/* Filter bar */}
-        <div className="p-4 border-b border-slate-200 bg-slate-50 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <ClipboardList className="size-4 text-[#002147]" />
-            <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
-              Faculty Preference Carts &amp; Allocation Status
-            </h3>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-            <div className="relative flex-1 md:w-56">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-slate-400" />
+        {/* Table card */}
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          {/* Filters */}
+          <div className="p-4 border-b border-slate-100 bg-slate-50/80 flex flex-wrap items-center gap-3">
+            <div className="relative flex-1 max-w-xs">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-slate-400" />
               <Input
                 placeholder="Search faculty name..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="h-8 pl-8 text-xs bg-white rounded-md"
+                className="pl-9 bg-white h-9"
               />
             </div>
-
-            <select
-              value={programmeFilter}
-              onChange={(e) => setProgrammeFilter(e.target.value)}
-              className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700"
-            >
-              <option value="ALL">All Programmes</option>
-              <option value="MCA">MCA</option>
-              <option value="MCA GEN AI">MCA GEN AI</option>
-            </select>
-
             <select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700"
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-700"
             >
-              <option value="ALL">All Submission Statuses</option>
+              <option value="ALL">All Statuses</option>
               <option value="SUBMITTED">Submitted</option>
-              <option value="PENDING">Pending</option>
+              <option value="NOT_SUBMITTED">Not Submitted</option>
+              <option value="PENDING">Pending Review</option>
+              <option value="APPROVED">Approved</option>
             </select>
           </div>
-        </div>
 
-        {/* Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left border-collapse">
-            <thead className="text-[11px] font-bold text-slate-600 bg-slate-100 uppercase border-b border-slate-200">
-              <tr>
-                <th className="px-4 py-3">Faculty</th>
-                <th className="px-4 py-3">Programme</th>
-                <th className="px-4 py-3">Submitted Preferences</th>
-                <th className="px-4 py-3 text-center">Status</th>
-                <th className="px-4 py-3 text-center">Default Hrs</th>
-                <th className="px-4 py-3 text-center">Allocated</th>
-                <th className="px-4 py-3 text-center">Remaining</th>
-                <th className="px-4 py-3 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {filteredRows.length === 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="text-xs uppercase text-slate-500 font-bold bg-slate-50 border-b border-slate-200">
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-slate-500">
-                    No faculty records found.
-                  </td>
+                  <th className="px-6 py-3">Faculty Name</th>
+                  <th className="px-6 py-3 text-center">Submission Status</th>
+                  <th className="px-6 py-3 text-center"># Preferences</th>
+                  <th className="px-6 py-3 text-center">Review Status</th>
+                  <th className="px-6 py-3 text-center">Actions</th>
                 </tr>
-              ) : (
-                filteredRows.map((w) => {
-                  const sub = preferences[w.facultyId];
-                  const hasPrefs = sub && sub.preferences.length > 0;
-
-                  return (
-                    <tr
-                      key={w.facultyId}
-                      className="hover:bg-blue-50/40 transition-colors"
-                    >
-                      {/* Faculty Name */}
-                      <td className="px-4 py-3 font-semibold text-slate-900">
-                        <p className="font-bold text-slate-900">{w.facultyName}</p>
-                        <p className="text-[10px] text-slate-500 font-mono">{w.designation} · {w.facultyId}</p>
-                      </td>
-
-                      {/* Programme */}
-                      <td className="px-4 py-3 font-medium text-slate-700">
-                        {w.programme}
-                      </td>
-
-                      {/* Preferences List Pills */}
-                      <td className="px-4 py-3 max-w-xs">
-                        {hasPrefs ? (
-                          <div className="flex flex-wrap gap-1">
-                            {sub.preferences.slice(0, 3).map((p) => (
-                              <span
-                                key={p.courseCode}
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-900 font-mono text-[10px]"
-                                title={p.courseTitle}
-                              >
-                                <strong className="text-blue-700 font-bold">#{p.rank}</strong>
-                                <span>{p.courseCode}</span>
-                              </span>
-                            ))}
-                            {sub.preferences.length > 3 && (
-                              <span className="text-[10px] text-slate-400 font-semibold self-center">
-                                +{sub.preferences.length - 3} more
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-slate-400 italic text-[11px]">
-                            No preferences submitted
-                          </span>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filtered.length > 0 ? (
+                  filtered.map((row) => (
+                    <tr key={row.faculty_id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-6 py-4">
+                        <p className="font-semibold text-slate-900">{row.faculty_name}</p>
+                        {row.designation && (
+                          <p className="text-[11px] text-slate-500">{row.designation}</p>
                         )}
                       </td>
-
-                      {/* Status */}
-                      <td className="px-4 py-3 text-center">
-                        <WorkloadStatusBadge status={w.preferencesStatus} size="sm" />
+                      <td className="px-6 py-4 text-center">
+                        <StatusBadge status={row.submission_status} />
                       </td>
-
-                      {/* Default */}
-                      <td className="px-4 py-3 text-center font-mono font-bold text-slate-700">
-                        {w.defaultHours}h
+                      <td className="px-6 py-4 text-center font-mono text-slate-700 font-medium">
+                        {row.num_prefs > 0 ? row.num_prefs : "—"}
                       </td>
-
-                      {/* Allocated */}
-                      <td className="px-4 py-3 text-center font-mono font-bold text-blue-700">
-                        {w.allocatedHours}h
+                      <td className="px-6 py-4 text-center">
+                        {row.submission_status === "SUBMITTED" ? (
+                          <StatusBadge status={row.review_status} />
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
                       </td>
-
-                      {/* Remaining */}
-                      <td className="px-4 py-3 text-center font-mono font-bold text-amber-700">
-                        {w.remainingHours}h
-                      </td>
-
-                      {/* Action */}
-                      <td className="px-4 py-3 text-right">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setSelectedFacultyId(w.facultyId)}
-                          className="h-7 px-2.5 text-xs text-[#002147] border-blue-200 bg-white hover:bg-blue-50 gap-1"
-                        >
-                          <Eye className="size-3.5" />
-                          <span>VIEW</span>
-                        </Button>
+                      <td className="px-6 py-4 text-center">
+                        {row.submission ? (
+                          <Button
+                            size="sm"
+                            onClick={() => setSelectedSubmission(row.submission)}
+                            className="bg-[#002147] hover:bg-[#001a38] text-white text-xs"
+                          >
+                            Review
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="outline" disabled className="text-xs">
+                            Review
+                          </Button>
+                        )}
                       </td>
                     </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="px-6 py-16 text-center text-slate-500">
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="size-12 rounded-full bg-slate-100 flex items-center justify-center">
+                          <AlertCircle className="size-6 text-slate-400" />
+                        </div>
+                        <p className="font-medium">No faculty preferences found.</p>
+                        <p className="text-xs">Preference submissions will appear here once faculty submit them.</p>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
-      {/* ────────────────────────────────────────────────────────── */}
-      {/* 3. FACULTY PREFERENCES DETAIL DIALOG */}
-      {/* ────────────────────────────────────────────────────────── */}
-      <Dialog open={!!selectedFacultyId} onOpenChange={(open) => !open && setSelectedFacultyId(null)}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center justify-between">
-              <span>{selectedFacultyWorkload?.facultyName} — Preferences</span>
-              {selectedFacultyWorkload && (
-                <WorkloadStatusBadge status={selectedFacultyWorkload.preferencesStatus} />
-              )}
-            </DialogTitle>
-            <DialogDescription>
-              {selectedFacultyWorkload?.designation} · {selectedFacultyWorkload?.programme} · Submitted:{' '}
-              {selectedSubmission?.submittedAt || 'Pending'}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2 text-xs">
-            <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex justify-between items-center text-xs">
-              <div>
-                <p className="text-[10px] text-slate-400 uppercase font-bold">Workload Status</p>
-                <p className="font-bold text-slate-800 text-sm">
-                  {selectedFacultyWorkload?.allocatedHours}h / {selectedFacultyWorkload?.defaultHours}h (Allocated / Default)
-                </p>
-              </div>
-              <WorkloadStatusBadge status={selectedFacultyWorkload?.status || 'UNDERLOADED'} />
-            </div>
-
-            <div className="space-y-2">
-              <p className="font-bold uppercase tracking-wider text-slate-500 text-[11px]">
-                Ranked Subject Preferences
-              </p>
-
-              {!selectedSubmission || selectedSubmission.preferences.length === 0 ? (
-                <p className="p-4 rounded bg-slate-100 text-slate-500 text-center">
-                  This faculty has not selected any preferences yet.
-                </p>
-              ) : (
-                <div className="divide-y divide-slate-100 border rounded-lg overflow-hidden">
-                  {selectedSubmission.preferences.map((pref) => {
-                    const course = courseList.find((c) => c.code === pref.courseCode);
-                    const catInfo = course ? COURSE_CATEGORIES[course.category] : null;
-
-                    return (
-                      <div key={pref.courseCode} className="p-3 flex items-center justify-between hover:bg-slate-50">
-                        <div className="flex items-center gap-3">
-                          <span className="size-6 rounded-full bg-[#002147] text-white font-bold text-xs flex items-center justify-center shrink-0">
-                            {pref.rank}
-                          </span>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded text-[10px]">
-                                {pref.courseCode}
-                              </span>
-                              <span className="font-bold text-slate-900">{pref.courseTitle}</span>
-                            </div>
-                            <p className="text-[11px] text-slate-500 mt-0.5">
-                              {catInfo?.name} · Credits: {pref.credits} · Theory: {pref.theoryHours}h · Lab: {pref.practicalHours}h
-                            </p>
-                          </div>
-                        </div>
-
-                        <span className="font-bold text-xs text-slate-700">
-                          Rank #{pref.rank}
-                        </span>
-                      </div>
-                    );
-                  })}
+      {/* Review Modal — submission-level review */}
+      <Dialog open={!!selectedSubmission} onOpenChange={(o) => !o && setSelectedSubmission(null)}>
+        <DialogContent className="max-w-4xl p-0 overflow-hidden bg-slate-50">
+          {selectedSubmission && (
+            <>
+              {/* Modal header */}
+              <div className="bg-[#002147] p-6 text-white flex items-start justify-between">
+                <div>
+                  <DialogTitle className="text-xl font-bold">
+                    {selectedSubmission.faculty_name} — Submitted Preferences
+                  </DialogTitle>
+                  <p className="text-sm text-blue-200 mt-1">
+                    Submitted on{" "}
+                    {selectedSubmission.submitted_at
+                      ? new Date(selectedSubmission.submitted_at).toLocaleString("en-IN", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })
+                      : "Unknown"}
+                  </p>
                 </div>
-              )}
-            </div>
+                <div className="text-right">
+                  <StatusBadge status={selectedSubmission.review_status || "PENDING"} />
+                </div>
+              </div>
 
-            <div className="pt-2 flex justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setSelectedFacultyId(null)}
-                className="text-xs"
-              >
-                Close View
-              </Button>
-            </div>
-          </div>
+              {/* Preference items table */}
+              <div className="p-6">
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm mb-6">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-bold">
+                      <tr>
+                        <th className="px-5 py-3 text-center w-12">Rank</th>
+                        <th className="px-5 py-3">Subject Code</th>
+                        <th className="px-5 py-3">Subject Name</th>
+                        <th className="px-5 py-3 text-center">Category</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {[...(selectedSubmission.items || [])].sort((a: any, b: any) => a.rank - b.rank).map((item: any) => (
+                        <tr key={item.id} className="hover:bg-slate-50/50">
+                          <td className="px-5 py-3 text-center font-bold text-slate-800">{item.rank}</td>
+                          <td className="px-5 py-3 font-mono font-semibold text-blue-700">{item.subject_code}</td>
+                          <td className="px-5 py-3 font-medium text-slate-800">{item.subject_name}</td>
+                          <td className="px-5 py-3 text-center">
+                            <CategoryBadge category={item.category || "CORE"} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Decision — submission-level */}
+                {!isFinalized && (
+                  <div>
+                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Decision</p>
+                    <div className="flex items-center gap-3">
+                      <Button
+                        onClick={() => handleReview(selectedSubmission.id, "APPROVED")}
+                        disabled={isUpdating}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                      >
+                        Approve
+                      </Button>
+                      <Button
+                        onClick={() => handleReview(selectedSubmission.id, "PENDING")}
+                        disabled={isUpdating}
+                        className="bg-amber-500 hover:bg-amber-600 text-white font-bold"
+                      >
+                        Keep Pending
+                      </Button>
+                      <Button
+                        onClick={() => handleReview(selectedSubmission.id, "DENIED")}
+                        disabled={isUpdating}
+                        className="bg-red-600 hover:bg-red-700 text-white font-bold"
+                      >
+                        Deny
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => setSelectedSubmission(null)}
+                        className="ml-auto"
+                      >
+                        Close
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {isFinalized && (
+                  <div className="flex items-center justify-end">
+                    <Button variant="outline" onClick={() => setSelectedSubmission(null)}>
+                      Close
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </WorkloadShell>

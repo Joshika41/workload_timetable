@@ -1,4 +1,4 @@
-﻿import uuid
+import uuid
 from datetime import datetime
 from sqlalchemy import JSON, DateTime
 import enum
@@ -146,11 +146,11 @@ class Syllabus(Base):
     course_type = Column(String, nullable=False)
     subject_category = Column(String, nullable=True)
     theory_hours_l = Column(Integer, default=0)
-    practical_hours_p = Column(Integer, default=0)
-    credits_c = Column(Integer, default=0)
+    practical_hours = Column(Integer, default=0)
+    total_hours = Column(Integer, default=0)
+    category = Column(String, default='CORE')
     program_type = Column(Enum(ProgramTypeEnum), nullable=True)
     semester_type = Column(Enum(SemesterTypeEnum), nullable=True)
-    category = Column(String, nullable=False)
     batch_sync_id = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
 

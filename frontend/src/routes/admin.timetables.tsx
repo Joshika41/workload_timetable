@@ -1,159 +1,214 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { ArrowLeft } from "lucide-react";
-import { PortalShell } from "@/components/PortalShell";
-import { adminNav } from "@/components/portal-nav";
-import { TimetableGrid } from "@/components/TimetableGrid";
-import { useAuth } from "@/lib/auth";
-import { cn } from "@/lib/utils";
-import { useQuery } from "@tanstack/react-query";
-import api from "@/lib/api";
-import type { Slot } from "@/lib/erp-data";
-import { Button } from "@/components/ui/button";
-import html2pdf from "html2pdf.js";
+import { createFileRoute } from '@tanstack/react-router';
+import { useState, useEffect } from 'react';
+import { WorkloadShell } from '@/components/WorkloadShell';
+import { useWorkspace } from '@/context/WorkspaceContext';
+import { Button } from '@/components/ui/button';
+import { ArrowLeft, Layers, Eye, Download, Printer } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { apiClient } from '@/api/client';
+import { workloadApi } from '@/api/workloadApi';
 
-export const Route = createFileRoute("/admin/timetables")({
-  head: () => ({
-    meta: [
-      { title: "Master Class Timetables · Admin · SRM ERP" },
-      {
-        name: "description",
-        content:
-          "Review published six-period master timetables for every MCA section with venue and lab allocations.",
-      },
-      { property: "og:title", content: "Master Class Timetables · Admin · SRM ERP" },
-      {
-        property: "og:description",
-        content: "Six-period master timetables for every section with venue and lab allocations.",
-      },
-    ],
-  }),
-  component: MasterTimetables,
+export const Route = createFileRoute('/admin/timetables')({
+  component: AdminClassMatrixPage,
 });
 
-function MasterTimetables() {
-  const { session } = useAuth();
-  
-  // Fetch metadata to get sections
-  const { data: metadata } = useQuery({
-    queryKey: ["metadata"],
-    queryFn: async () => {
-      const res = await api.get("/api/timetable/metadata");
-      return res.data;
-    }
-  });
+function AdminClassMatrixPage() {
+  const { activeWorkspace } = useWorkspace();
+  const [matrixData, setMatrixData] = useState<any[]>([]);
+  const [allocations, setAllocations] = useState<any[]>([]);
+  const [selectedSection, setSelectedSection] = useState<any | null>(null);
 
-  const sections = metadata?.sections || [];
-  const [section, setSection] = useState("");
+  useEffect(() => {
+    if (!activeWorkspace) return;
 
-  // Auto-select first section when loaded
-  useMemo(() => {
-    if (sections.length > 0 && !section) {
-      setSection(sections[0]);
-    }
-  }, [sections, section]);
+    // Fetch matrix data (which gives us subjects allocated to each section)
+    workloadApi.getClassMatrix(activeWorkspace.workspace_id)
+      .then(setMatrixData)
+      .catch(console.error);
 
-  // Fetch all timetable blocks
-  const { data: allBlocks, isLoading } = useQuery({
-    queryKey: ["admin-timetable"],
-    queryFn: async () => {
-      const res = await api.get("/api/admin/timetable");
-      return res.data;
-    }
-  });
+    // Fetch allocations to check finalization status
+    apiClient.get('/allocation', { params: { workspace_id: activeWorkspace.workspace_id } })
+      .then(res => setAllocations(res.data))
+      .catch(console.error);
+      
+  }, [activeWorkspace]);
 
-  // Convert flat blocks to grid structure (5 days x 6 periods)
-  const grid = useMemo(() => {
-    const defaultGrid: (Slot | null)[][] = Array(5).fill(null).map(() => Array(6).fill(null));
-    if (!allBlocks || !section) return defaultGrid;
-    
-    allBlocks.forEach((block: any) => {
-      if (block.section === section) {
-        if (block.day >= 0 && block.day < 5 && block.period >= 0 && block.period < 6 && defaultGrid[block.day]) {
-          defaultGrid[block.day]![block.period] = {
-            subject: block.subject,
-            venue: "", // Backend might not have venues attached directly to the block yet
-            faculty: block.faculty_id,
-            section: block.section
-          };
-        }
-      }
-    });
-    return defaultGrid;
-  }, [allBlocks, section]);
+  if (!activeWorkspace) return null;
 
-  const exportPDF = () => {
-    const element = document.getElementById("timetable-export-container");
-    if (!element) return;
-    const opt: any = {
-      margin: 0.5,
-      filename: `timetable_${section}.pdf`,
-      image: { type: "jpeg", quality: 0.98 },
-      html2canvas: { scale: 2 },
-      jsPDF: { unit: "in", format: "a4", orientation: "landscape" },
+  const isWorkspaceFinalized = allocations.length > 0 && allocations.every(a => a.status === 'FINALIZED');
+
+  const sectionRows = ((activeWorkspace as any).sections || []).map((sec: any) => {
+    const secAllocs = allocations.filter(a => a.section_id === sec.id);
+    const fullyAllocatedCount = secAllocs.length;
+    return {
+      section_id: sec.id,
+      section_name: sec.name,
+      total_subjects: secAllocs.length > 0 ? secAllocs.length : '-', // We can refine this if we know expected total
+      fully_allocated: fullyAllocatedCount,
+      allocations: secAllocs
     };
-    (html2pdf() as any).set(opt).from(element).save();
-  };
+  });
 
   return (
-    <PortalShell
+    <WorkloadShell
       role="admin"
-      title="Master Class Timetables"
-      subtitle={session?.department ?? "All institutional sections"}
-      nav={adminNav}
-    >
-      <div className="space-y-5">
-        <div className="flex items-center justify-between">
+      title="Class-Wise Matrix"
+      subtitle="Section-by-section breakdown of subject allocations and assigned faculty"
+      actions={
+        <div className="flex items-center gap-2">
           <Button
             size="sm"
-            variant="ghost"
+            variant="outline"
             onClick={() => window.history.back()}
-            className="h-8 gap-1 text-xs text-muted-foreground hover:text-foreground border border-border bg-card"
+            className="h-8 gap-1 text-xs border-slate-200 bg-white"
           >
-            <ArrowLeft className="size-3.5" />
-            <span>Back</span>
+            <ArrowLeft className="size-3.5" /> Back
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => window.print()}
+            className="h-8 gap-1 text-xs border-slate-300 bg-white hover:bg-slate-100"
+          >
+            <Printer className="size-3.5" /> Print
+          </Button>
+          <Button
+            size="sm"
+            className="h-8 gap-1.5 text-xs bg-[#002147] hover:bg-[#001833] text-white"
+          >
+            <Download className="size-3.5" /> Export Excel
           </Button>
         </div>
-        <div className="flex flex-wrap gap-2 rounded-xl border border-border bg-card p-3 shadow-[var(--shadow-card)]">
-          {sections.length === 0 && <span className="text-sm text-muted-foreground p-2">No sections generated yet. Generate the timetable first.</span>}
-          {sections.map((s: string) => (
-            <button
-              key={s}
-              onClick={() => setSection(s)}
-              className={cn(
-                "rounded-md px-3.5 py-2 text-sm font-medium transition-colors",
-                s === section
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
-              )}
-            >
-              {s}
-            </button>
-          ))}
+      }
+    >
+      {!isWorkspaceFinalized ? (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-8 text-center mt-4">
+          <h3 className="text-lg font-bold text-amber-800 mb-2">Subject Allocation Not Finalized</h3>
+          <p className="text-amber-700 max-w-md mx-auto">
+            The Class-Wise Matrix can only be viewed after you have finalized the subject allocations for this academic context. Please complete the subject allocation process first.
+          </p>
         </div>
+      ) : (
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden mt-4">
+          {/* Header */}
+          <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-slate-800 font-bold uppercase tracking-wider text-sm">
+              <Layers className="size-4 text-[#002147]" />
+              Class-Wise Matrix
+            </div>
+          </div>
 
-        <div className="rounded-xl border border-border bg-card p-4 shadow-[var(--shadow-card)] sm:p-5">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="text-lg font-semibold text-foreground">{section}</h2>
-              <p className="text-sm text-muted-foreground">
-                Monday to Friday · exactly 6 periods per day · labs de-duplicated
-              </p>
-            </div>
-            <div className="flex gap-2 items-center">
-              <Button size="sm" variant="outline" onClick={exportPDF}>
-                Export PDF
-              </Button>
-              <span className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-accent-foreground">
-                Published
-              </span>
-            </div>
-          </div>
-          <div id="timetable-export-container">
-            <TimetableGrid grid={grid} showFaculty />
+          {/* Table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-bold">
+                <tr>
+                  <th className="px-6 py-4">Programme</th>
+                  <th className="px-6 py-4 text-center">Year</th>
+                  <th className="px-6 py-4 text-center">Semester</th>
+                  <th className="px-6 py-4 font-bold text-slate-800">Section</th>
+                  <th className="px-6 py-4 text-center">Total Subjects</th>
+                  <th className="px-6 py-4 text-center">Fully Allocated</th>
+                  <th className="px-6 py-4 text-center">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {sectionRows.map(row => (
+                  <tr key={row.section_id} className="hover:bg-slate-50/50">
+                    <td className="px-6 py-4 font-semibold text-slate-700">{activeWorkspace.programme_name}</td>
+                    <td className="px-6 py-4 text-center text-slate-600">Year {activeWorkspace.programme_year}</td>
+                    <td className="px-6 py-4 text-center text-slate-600">Sem {activeWorkspace.semester}</td>
+                    <td className="px-6 py-4 font-bold text-slate-900">{row.section_name}</td>
+                    <td className="px-6 py-4 text-center font-mono text-slate-700">{row.total_subjects}</td>
+                    <td className="px-6 py-4 text-center font-mono text-emerald-700 font-semibold">{row.fully_allocated}</td>
+                    <td className="px-6 py-4 text-center">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setSelectedSection(row)}
+                        className="text-xs h-8 border-slate-300 text-[#002147] hover:bg-slate-50"
+                      >
+                        <Eye className="size-3.5 mr-1.5" /> View Details
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
-      </div>
-    </PortalShell>
+      )}
+
+      {/* Matrix Detail Modal */}
+      <Dialog open={!!selectedSection} onOpenChange={(open) => !open && setSelectedSection(null)}>
+        <DialogContent className="max-w-4xl p-0 overflow-hidden bg-slate-50">
+          {selectedSection && (
+            <>
+              <div className="bg-[#002147] p-6 text-white flex justify-between items-center">
+                <div>
+                  <DialogTitle className="text-xl font-bold">Class-Wise Allocation Matrix</DialogTitle>
+                  <p className="text-sm text-blue-200 mt-2">{activeWorkspace.programme_name} · Year {activeWorkspace.programme_year} · {selectedSection.section_name}</p>
+                </div>
+              </div>
+              
+              <div className="p-6">
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-bold">
+                      <tr>
+                        <th className="px-6 py-3">Subject Code</th>
+                        <th className="px-6 py-3">Subject Name</th>
+                        <th className="px-6 py-3">Main Faculty</th>
+                        <th className="px-6 py-3">Assistant / IN-2</th>
+                        <th className="px-6 py-3 text-center">T / P Hrs</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {selectedSection.allocations.map((alloc: any) => {
+                        const main = alloc.components.find((c: any) => c.role === 'MAIN');
+                        const asst = alloc.components.find((c: any) => c.role === 'ASSISTANT');
+                        
+                        return (
+                          <tr key={alloc.id} className="hover:bg-slate-50/50">
+                            <td className="px-6 py-4 font-mono font-medium text-blue-700">{alloc.subject_code}</td>
+                            <td className="px-6 py-4 font-semibold text-slate-800">{alloc.subject_name}</td>
+                            <td className="px-6 py-4 text-slate-900 font-medium">
+                              {main?.faculty_name || '-'}
+                            </td>
+                            <td className="px-6 py-4 text-slate-600 text-xs">
+                              {asst?.faculty_name || '-'}
+                            </td>
+                            <td className="px-6 py-4 text-center font-mono text-slate-700">
+                              {(main?.theory_hours || 0) + (asst?.theory_hours || 0)} / {(main?.practical_hours || 0) + (asst?.practical_hours || 0)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {selectedSection.allocations.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-6 py-8 text-center text-slate-500">
+                            No allocations found for this section.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="mt-8 flex justify-end">
+                  <Button onClick={() => setSelectedSection(null)} className="bg-[#002147] hover:bg-[#001833] text-white px-8">
+                    Close
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </WorkloadShell>
   );
 }

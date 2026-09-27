@@ -1,166 +1,154 @@
-import { toast } from "sonner";
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import type { Role } from "./erp-data";
-import api from "./api";
-import { jwtDecode } from "jwt-decode";
+import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { apiClient } from '@/api/client';
+import { authApi } from '@/api/index';
+import { toast } from 'sonner';
 
-export interface Session {
-  username: string; // Used as email
+export interface ERPContext {
+  departmentId: number;
+  departmentName: string;
+  institutionId: number;
+  institutionName: string;
+  designation: string;
+  erpId: string;
+  programmeId: number;
+  programmeName: string;
+  programmeType: string;
+  semesterType: 'ODD' | 'EVEN';
+  academicYear: string;
+}
+
+export interface ERPSession {
+  token: string;
+  role: 'HOD' | 'FACULTY' | 'ERP_COORDINATOR' | 'MASTER_ADMIN';
   name: string;
-  role: Role;
-  department?: string;
-  faculty_id?: string;
+  userId: number;
+  facultyProfileId: number | null;
+  context: ERPContext;
 }
 
-interface AuthValue {
-  session: Session | null;
-  ready: boolean;
-  signIn: (username: string, password: string, role: Role) => Promise<{ ok: boolean; error?: string }>;
-  signOut: () => void;
-  setDepartment: (dept: string) => void;
-  departmentLabs: Record<string, boolean>;
-  fetchDepartments: () => Promise<void>;
-  toggleHasLabs: (dept: string, has_labs: boolean) => Promise<void>;
+interface AuthContextType {
+  session: ERPSession | null;
+  isLoading: boolean;
+  demoLogin: (params: Record<string, unknown>) => Promise<void>;
+  realLogin: (username: string, password?: string) => Promise<void>;
+  logOut: () => void;
+  updateContext: (ctx: Partial<ERPContext>) => void;
 }
 
-const STORAGE_KEY = "srm-erp-session";
-const AuthContext = createContext<AuthValue | null>(null);
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// Legacy compat - old code may check these
+export type { AuthContextType };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [ready, setReady] = useState(false);
-  const [departmentLabs, setDepartmentLabs] = useState<Record<string, boolean>>({});
+  const [session, setSession] = useState<ERPSession | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) setSession(JSON.parse(raw) as Session);
-    } catch {
-      /* ignore */
+    const token = localStorage.getItem('auth_token');
+    const stored = localStorage.getItem('erp_session');
+    if (token && stored) {
+      try {
+        const s = JSON.parse(stored) as ERPSession;
+        setSession(s);
+        apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      } catch {
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('erp_session');
+      }
     }
-    setReady(true);
+    setIsLoading(false);
   }, []);
 
+  const demoLogin = async (_params: Record<string, unknown>) => {
+    // legacy compat — no-op
+  };
 
-  // Proactive JWT Expiry checking
-  useEffect(() => {
-    if (!session) return;
-    
-    const checkExpiry = () => {
-      try {
-        const token = window.localStorage.getItem("auth_token");
-        if (!token) return;
-        
-        const parts = token.split('.');
-        if (parts.length > 1 && parts[1]) {
-          const payload = JSON.parse(atob(parts[1]));
-          const exp = payload.exp * 1000;
-          const now = Date.now();
-          const timeRemaining = exp - now;
-          
-          // If less than 5 minutes remaining, warn the user
-          if (timeRemaining > 0 && timeRemaining < 5 * 60 * 1000) {
-            toast.warning("Your session will expire soon. Please save your work.", { id: "jwt-warn" });
-          }
-        }
-      } catch (e) {
-        // ignore decoding errors
+  const realLogin = async (username: string, password: string = '123456') => {
+    try {
+      const formData = new URLSearchParams();
+      formData.append('username', username);
+      formData.append('password', password);
+      
+      const response = await authApi.login(formData);
+
+      const newSession: ERPSession = {
+        token: response.access_token,
+        role: response.role as ERPSession['role'],
+        name: response.name,
+        userId: response.user_id || 0,
+        facultyProfileId: response.faculty_profile_id || null,
+        context: {
+          departmentId: response.department_id || 0,
+          departmentName: response.department_name || '',
+          institutionId: response.institution_id || 0,
+          institutionName: response.institution_name || '',
+          designation: response.designation || '',
+          erpId: response.erp_id || '',
+          programmeId: 0,
+          programmeName: '',
+          programmeType: '',
+          semesterType: 'ODD',
+          academicYear: '2026-27',
+        },
+      };
+
+      setSession(newSession);
+      localStorage.setItem('auth_token', response.access_token);
+      localStorage.setItem('erp_session', JSON.stringify(newSession));
+      apiClient.defaults.headers.common['Authorization'] = `Bearer ${response.access_token}`;
+
+      toast.success(`Welcome, ${newSession.name}!`);
+
+      if (response.role === 'HOD' || response.role === 'ERP_COORDINATOR') {
+        navigate('/hod');
+      } else {
+        navigate('/faculty');
       }
-    };
-    
-    // Check every minute
-    const interval = setInterval(checkExpiry, 60000);
-    return () => clearInterval(interval);
-  }, [session]);
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: any } } };
+      let msg = 'Login failed. Please try again.';
+      const detail = axiosErr.response?.data?.detail;
+      if (typeof detail === 'string') {
+        msg = detail;
+      } else if (Array.isArray(detail)) {
+        msg = detail.map((d: any) => d.msg).join(', ');
+      }
+      toast.error(msg);
+      throw err;
+    }
+  };
 
+  const logOut = () => {
+    setSession(null);
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('erp_session');
+    delete apiClient.defaults.headers.common['Authorization'];
+    navigate('/');
+    toast.info('Logged out successfully.');
+  };
 
-  const value = useMemo<AuthValue>(
-    () => ({
-      departmentLabs,
-      session,
-      ready,
-      signIn: async (email, password, role) => {
-        try {
-          const res = await api.post("/api/auth/login", { 
-            email: email, 
-            username: email, 
-            password: password 
-          });
-          const token = res.data.access_token;
-          
-          const payload = jwtDecode<any>(token);
-          const backendRole = payload.role.toLowerCase();
-          
-          if (backendRole !== role.toLowerCase() && backendRole !== "master_admin") {
-            return { ok: false, error: `These credentials are not valid for the ${role} portal.` };
-          }
-          
-          // Map backend master_admin back to frontend 'admin' role expectations if necessary
-          const mappedRole = backendRole === "master_admin" ? "admin" : (backendRole as Role);
-          
-          const next: Session = { 
-            username: email, 
-            name: email.split('@')[0] || email,
-            role: mappedRole,
-            faculty_id: payload.sub
-          };
-          
-          setSession(next);
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-          window.localStorage.setItem("auth_token", token);
-          return { ok: true };
-        } catch (error: any) {
-          return { ok: false, error: error.response?.data?.detail || "Invalid email or password." };
-        }
-      },
-      signOut: () => {
-        setSession(null);
-        window.localStorage.removeItem(STORAGE_KEY);
-        window.localStorage.removeItem("auth_token");
-      },
-      fetchDepartments: async () => {
-        try {
-          if (session?.role === 'admin') {
-            const res = await api.get("/api/admin/departments");
-            if (Array.isArray(res.data)) {
-              // Convert array to Record<string, boolean> for backward compatibility
-              const labsMap: Record<string, boolean> = {};
-              res.data.forEach(d => {
-                labsMap[d.name] = d.has_labs || false;
-              });
-              setDepartmentLabs(labsMap);
-            } else {
-              setDepartmentLabs(res.data);
-            }
-          }
-        } catch { /* ignore */ }
-      },
-      toggleHasLabs: async (dept: string, has_labs: boolean) => {
-        try {
-          await api.put(`/api/admin/departments/${dept}`, { has_labs });
-          setDepartmentLabs(prev => ({...prev, [dept]: has_labs}));
-        } catch (e: any) {
-          console.error(e);
-          alert(e.response?.data?.detail || "Failed to update department settings.");
-        }
-      },
-      setDepartment: (department) => {
-        setSession((prev) => {
-          if (!prev) return prev;
-          const next = { ...prev, department };
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-          return next;
-        });
-      },
-    }),
-    [session, ready, departmentLabs],
+  const updateContext = (newCtx: Partial<ERPContext>) => {
+    if (!session) return;
+    const updatedSession = { ...session, context: { ...session.context, ...newCtx } };
+    setSession(updatedSession);
+    localStorage.setItem('erp_session', JSON.stringify(updatedSession));
+  };
+
+  return (
+    <AuthContext.Provider value={{ session, isLoading, demoLogin, realLogin, logOut, updateContext }}>
+      {children}
+    </AuthContext.Provider>
   );
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }
+
+// Legacy compat aliases
+export const useSession = useAuth;

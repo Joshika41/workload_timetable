@@ -1,0 +1,1525 @@
+You are continuing development of the existing SRM UNIVERSITY WORKLOAD AND TIMETABLE ERP.
+
+IMPORTANT:
+This is PART 1 OF 3 of one larger implementation specification. Do not try to implement the entire ERP in this prompt. Complete only the scope assigned to Part 1, while preparing the architecture/data model correctly for Parts 2 and 3.
+
+DO NOT restart, rebuild, replace, or redesign the project from scratch.
+
+First inspect the CURRENT codebase and understand what is already implemented. Preserve correct existing work. Modify only what is necessary. If previous agent execution already changed files such as faculty.py, workload.py, pdf_service.py, or frontend files, inspect those changes and continue from the current state instead of undoing them.
+
+The project must remain:
+- FastAPI backend
+- Python 3.14
+- React + TypeScript frontend
+- PostgreSQL / Supabase database
+- Axios for frontend API calls
+- No TanStack Query
+- Strong TypeScript interfaces for request/response objects
+- No `any`
+- Backend structure should respect controllers → services → repository
+- Database must be the source of truth
+
+The existing project documentation in docs/reference/ is useful, but the workflow defined in these 3 prompts is the authoritative updated workflow if any older mock/dashboard requirement conflicts with it.
+
+==================================================
+1. CORE PRODUCT PURPOSE
+==================================================
+
+This is a university-wide Workload and Timetable ERP intended to replace Excel-based workload management.
+
+It must work dynamically across:
+- Institution
+- Department
+- Programme
+- Year
+- Semester
+- Section/Class
+- Faculty
+- Subjects
+- Faculty preferences
+- Subject allocations
+- Roles
+- Theory hours
+- Practical/Lab hours
+
+Do NOT create a system that works only for MCA or only for one semester.
+
+The same application must support different departments, programmes, institutions, semesters, sections, faculty and subjects using database-driven data.
+
+Do not identify academic contexts merely by matching section names such as "A" or "B". Academic context must use a stable workspace/context identity.
+
+The canonical academic context is:
+
+Institution → Department → Programme → Year → Semester → Section
+
+A stable workspace/context ID must identify the selected academic workspace.
+
+==================================================
+2. REMOVE THE OLD MOCK-DASHBOARD MINDSET
+==================================================
+
+Do not build or preserve a fake dashboard based on static counters such as:
+- Pref Submitted 1
+- Pref Pending 17
+- Allocated Subjects 5
+- Unallocated 27
+- Reconciled 0
+- Underloaded 18
+- Campus Work 3 Faculty
+
+These are not the real workflow.
+
+The application must reflect actual database state.
+
+Do not use:
+- hardcoded faculty
+- hardcoded subjects
+- hardcoded allocations
+- fake preference status
+- static workload counters
+- mock workload-store state
+- frontend-only allocation state
+
+If `src/lib/workload-store.ts` or equivalent mock state exists and is no longer needed, remove its usage and migrate the affected screens to real API/database state.
+
+==================================================
+3. LOGIN / ENTRY FLOW
+==================================================
+
+Implement the new entry flow.
+
+The initial login experience should NOT ask the user to select an academic context.
+
+The login process is:
+
+1. Select Role:
+   - HOD
+   - Faculty
+
+2. Select Institution from exactly:
+   - E&T
+   - Flabs
+   - Management
+   - B-Arch
+
+3. Select the appropriate user/profile.
+
+The profile list must be filtered according to:
+- selected role
+- selected institution
+
+The user profile should clearly show:
+- Name
+- Employee ID
+- Institution
+- Department
+- Designation / Seniority
+
+Demo password:
+123456
+
+The primary button should clearly indicate the selected role, for example:
+
+SIGN IN AS HOD
+or
+SIGN IN AS FACULTY
+
+Do not hardcode a single user as the only valid login.
+
+The login flow must eventually use the real authentication/backend model already present in the project.
+
+Do not weaken backend authorization merely because this is a demo.
+
+==================================================
+4. USER CONTEXT
+==================================================
+
+After login, the application must know who the user is and what they are authorized to access.
+
+The academic context selected later by the user must never become the only authorization mechanism.
+
+For example:
+- A faculty member should only access their permitted faculty data.
+- An HOD should only manage the department/workspaces they are authorized to manage.
+- A user must not gain access to another department merely by changing a workspace ID in the frontend.
+
+Frontend filtering is NOT security.
+
+Backend authorization and data isolation must be enforced.
+
+==================================================
+5. FACULTY HOME / PREFERENCE WORKFLOW
+==================================================
+
+Implement the Faculty side as a real preference submission workflow.
+
+The faculty experience should be welcoming and simple.
+
+After login, faculty should be able to work with the academic semester context.
+
+Semester selection must clearly distinguish:
+
+Odd Semester:
+- 1
+- 3
+- 5
+
+Even Semester:
+- 2
+- 4
+- 6
+
+Do not assume every programme has every semester. Semester availability should come from the database/academic structure where appropriate.
+
+Once a semester/workspace is selected, show the actual syllabus/subjects available for that faculty's permitted academic context.
+
+The system must clearly distinguish programmes such as:
+
+MCA General
+vs
+MCA GEN AI
+
+Do not merge them merely because both contain "MCA".
+
+Subject identity must be database-driven.
+
+==================================================
+6. SUBJECT SELECTION
+==================================================
+
+Faculty should be able to select subjects they prefer to teach.
+
+The UI should clearly show:
+- Subject
+- Subject code where available
+- Subject type/class type
+- Programme
+- Semester
+- Relevant section/class context where applicable
+
+Use checkboxes or an equally clear selection mechanism.
+
+Selected subjects must be visible on the faculty home/workspace after selection.
+
+The system must store preferences in the backend.
+
+IMPORTANT:
+
+Preference is NOT allocation.
+
+When faculty selects a subject, that means:
+
+"I prefer / request this subject."
+
+It does NOT mean:
+
+"This subject has been allocated to me."
+
+Only the HOD can convert an approved preference into an actual allocation.
+
+==================================================
+7. FACULTY SELECTION RULES
+==================================================
+
+The faculty preference page must show the rules clearly near the top so the faculty understands what is required before submitting.
+
+Required rules:
+
+1. A class coordinator must take at least one CORE subject from their applicable class type.
+
+2. For each selected semester, faculty should have at least:
+   - one CORE subject
+   - one ELECTIVE subject
+
+3. Minor / multidisciplinary subjects are optional.
+
+4. Minor / multidisciplinary subjects must be visibly tagged:
+   OPTIONAL
+
+5. Once the required core/elective selection has been satisfied for a semester, additional CORE/ELECTIVE choices for that semester should become unavailable/disabled according to the business rule.
+
+6. Optional Minor / Multidisciplinary subjects must remain selectable even after the required Core + Elective selection is completed.
+
+The UI should explain why an option becomes disabled rather than simply making it appear broken.
+
+These rules must also be validated on the backend.
+
+Do not rely only on frontend checkbox restrictions.
+
+==================================================
+8. FACULTY PREFERENCE STATUS
+==================================================
+
+The faculty home should show the selected subjects and the current workflow status.
+
+Status progression:
+
+Preference Not Submitted
+        ↓
+Please wait for HOD’s approval
+        ↓
+Approved by HOD
+        ↓
+Finalized by HOD
+
+Do not allow the frontend to simply manufacture these states.
+
+Status must come from the backend/database.
+
+The distinction is important:
+
+Preference submission
+≠
+HOD approval
+≠
+Allocation
+≠
+Final workload finalization
+
+Keep these concepts separate in the data model.
+
+==================================================
+9. MULTIPLE FACULTY CAN PREFER THE SAME SUBJECT
+==================================================
+
+This is an important business rule.
+
+Multiple faculty members must be allowed to select the same subject as a preference.
+
+For example:
+
+Faculty A → prefers Data Mining
+Faculty B → prefers Data Mining
+Faculty C → prefers Data Mining
+
+This is valid.
+
+The preference system must NOT globally disable a subject just because another faculty selected it.
+
+The conflict is resolved later during HOD allocation.
+
+When a subject is eventually allocated/finalized to one faculty, other faculty preferences must remain visible as historical/submitted preferences, but the subject must no longer be available for conflicting allocation within the same applicable academic context.
+
+Do NOT globally disable by subject name alone.
+
+The conflict scope must consider the applicable academic identity, including as appropriate:
+
+Institution
+Department
+Programme
+Class Type
+Semester
+Subject
+Section
+
+Do not treat "same subject name" as universally conflicting across the university.
+
+==================================================
+10. DATABASE / API REQUIREMENTS FOR PART 1
+==================================================
+
+Inspect the existing database models and APIs before creating duplicates.
+
+Reuse existing correct structures where possible.
+
+Create or update the required models/endpoints for:
+
+- institutions
+- departments
+- programmes
+- years
+- semesters
+- sections
+- subjects
+- faculty
+- academic workspaces
+- faculty preferences
+- preference status
+
+Use proper foreign-key relationships.
+
+Do not duplicate the same concept under multiple unrelated tables merely to make the current screen work.
+
+The frontend must use Axios API calls.
+
+Use typed request/response interfaces.
+
+No `any`.
+
+==================================================
+11. WHAT NOT TO DO
+==================================================
+
+Do not:
+- rebuild the whole project
+- create a separate fake frontend
+- hardcode MCA-specific data
+- hardcode sections
+- create fake preference submissions
+- create fake HOD approvals
+- store workflow state only in React
+- bypass backend validation
+- remove working authentication unnecessarily
+- replace PostgreSQL/Supabase with local mock storage
+- introduce TanStack Query
+- create unnecessary libraries
+- change unrelated features
+
+==================================================
+12. EXECUTION METHOD
+==================================================
+
+Work in this order:
+
+1. Inspect current implementation.
+2. Identify what already exists.
+3. Preserve correct implementation.
+4. Implement missing Part 1 requirements.
+5. Update backend models/services/repositories/controllers as required.
+6. Update frontend pages/components/API clients.
+7. Run relevant backend/frontend checks.
+8. Fix errors.
+9. Verify the actual workflow using database-backed data.
+
+Do not spend the execution on a long explanation.
+
+IMPLEMENT → TEST → FIX → VERIFY.
+
+At the end, provide only a concise summary containing:
+- files changed
+- what was implemented
+- tests/checks performed
+- any genuine remaining blocker
+
+STOP after Part 1 is correctly implemented and verified.
+
+Do not begin the full HOD allocation/finalization implementation yet. That is Part 2 and Part 3.CONTINUE FROM THE CURRENT IMPLEMENTATION.
+
+This is PART 2 OF 3 of the SRM UNIVERSITY WORKLOAD AND TIMETABLE ERP implementation.
+
+IMPORTANT:
+Do NOT restart or rebuild the project.
+Do NOT undo correct work from Part 1.
+Do NOT create a parallel implementation.
+Inspect the current code and database state first, then implement only the missing HOD review and allocation workflow described below.
+
+All architectural, security, database, dynamic-data, TypeScript, FastAPI, React, PostgreSQL/Supabase and workflow rules established in Part 1 remain binding.
+
+The application must remain database-driven. No mock state or hardcoded workflow is acceptable.
+
+==================================================
+1. HOD WORKFLOW
+==================================================
+
+The HOD is responsible for reviewing faculty preferences and converting approved preferences into actual allocations.
+
+The intended workflow is:
+
+Faculty logs in
+→ selects/ranks subjects
+→ submits preference
+→ HOD sees submitted preference
+→ HOD reviews preference
+→ HOD approves/keeps pending/denies as appropriate
+→ HOD performs actual allocation
+→ HOD assigns section
+→ HOD assigns role
+→ HOD assigns theory/practical hours
+→ HOD validates allocation
+→ HOD finalizes later in Part 3
+
+Do not treat preference submission as allocation.
+
+==================================================
+2. HOD FACULTY LIST
+==================================================
+
+The HOD must be able to see faculty belonging to the HOD's authorized department/context.
+
+The faculty list should be ordered by seniority/designation where the available data supports a meaningful seniority order.
+
+Do not use arbitrary frontend ordering.
+
+Each faculty member should have a clear status indicating where they are in the workflow.
+
+Examples of meaningful states:
+
+Preference Not Submitted
+Preference Submitted
+Under HOD Review
+Approved
+Denied
+Allocation In Progress
+Allocated
+Finalized
+
+Use the actual backend state rather than hardcoded labels.
+
+==================================================
+3. HOD VIEW DETAILS
+==================================================
+
+When the HOD selects a faculty member and chooses View Details, display that faculty member's submitted preferences and allocation information.
+
+The allocation table must support:
+
+Subject
+Class Type
+Approval
+Section
+Role
+Theory Hours
+Lab/Practical Hours
+Total Hours
+
+Approval must support:
+YES
+NO
+
+Section must come from the actual academic workspace.
+
+For example, if the selected workspace has:
+A
+B
+C
+
+the UI should show A/B/C.
+
+Do NOT hardcode A/B/C if the selected workspace contains different sections.
+
+Role must support:
+
+Incharge-1
+Incharge-2
+
+Do not use vague role labels such as "Main" and "Assistant" if the current business requirement is specifically Incharge-1 / Incharge-2.
+
+Theory Hours:
+1–10
+
+Lab/Practical Hours:
+1–10
+
+Total:
+automatically calculated from the actual allocated theory + practical hours.
+
+Do not allow the frontend to submit an inconsistent total.
+
+The backend must calculate or validate the total.
+
+==================================================
+4. HOD PREFERENCE REVIEW
+==================================================
+
+The HOD must be able to review each submitted faculty preference.
+
+The review actions should support:
+
+APPROVE
+KEEP PENDING
+DENY
+
+The UI should clearly distinguish preference review from actual allocation.
+
+Approval means the preference is accepted for consideration.
+
+It does NOT automatically mean that the subject has been allocated.
+
+A denied preference must not become an allocation.
+
+A pending preference remains pending and must remain visible.
+
+Do not delete the original faculty preference merely because the HOD denies or keeps it pending.
+
+The preference history/state should remain understandable.
+
+==================================================
+5. ALLOCATION
+==================================================
+
+After reviewing preferences, the HOD can create actual subject allocations.
+
+Allocation should allow the HOD to specify:
+
+Faculty
+Subject
+Academic workspace/context
+Section
+Role
+Theory hours
+Practical/Lab hours
+
+The HOD must be able to allocate an approved preferred subject.
+
+The HOD may also be able to offer/additional allocation where the business rules permit a subject that was not in the faculty preference.
+
+If the existing PRD/business rules allow HOD to offer a non-preferred subject, preserve that capability.
+
+However, the UI must make it clear that this is an HOD allocation decision and not a faculty preference.
+
+==================================================
+6. SECTION ALLOCATION
+==================================================
+
+Section allocation must use the actual selected academic workspace.
+
+Example:
+
+Department:
+Computer Applications
+
+Programme:
+MCA GEN AI
+
+Year:
+1st Year
+
+Semester:
+1
+
+Sections:
+A
+B
+C
+
+The HOD must allocate against these real sections.
+
+Do not identify sections merely by matching strings.
+
+The backend allocation record should retain the stable workspace/context relationship.
+
+This is important because:
+
+Section A in MCA GEN AI Semester 1
+is not necessarily the same entity as
+Section A in another programme/semester/department.
+
+==================================================
+7. ROLE ALLOCATION
+==================================================
+
+Each allocation must support the role:
+
+Incharge-1
+or
+Incharge-2
+
+The system should validate role rules according to the applicable subject/class context.
+
+Do not allow accidental duplicate or contradictory role assignments if the business rules prohibit them.
+
+The database should represent the role explicitly.
+
+==================================================
+8. THEORY / PRACTICAL HOURS
+==================================================
+
+The HOD enters:
+
+Theory Hours
+Practical/Lab Hours
+
+Each value must be within the allowed range:
+
+1–10
+
+Total hours must be calculated automatically.
+
+Example:
+
+Theory = 3
+Practical = 2
+Total = 5
+
+The user should not manually type Total.
+
+Backend validation must reject invalid values.
+
+Do not permit:
+negative hours
+zero where allocation requires hours
+hours above allowed maximum
+inconsistent total
+invalid subject/workspace combinations
+
+==================================================
+9. FACULTY HOUR CAP
+==================================================
+
+Faculty workload must respect a designation-based hour cap.
+
+The cap must be determined dynamically according to faculty designation/seniority and the configured institution/business rules.
+
+Do NOT hardcode one universal maximum for every faculty member.
+
+The system must validate:
+
+allocated hours <= applicable faculty hour cap
+
+The UI should make the cap understandable to the HOD.
+
+If an allocation would exceed the faculty member's allowed workload, prevent or reject the allocation and explain why.
+
+Backend validation is mandatory.
+
+Frontend validation is helpful but insufficient.
+
+==================================================
+10. SUBJECT CONFLICT RULE
+==================================================
+
+Multiple faculty may prefer the same subject.
+
+Example:
+
+Faculty A → Data Mining
+Faculty B → Data Mining
+
+Both preferences remain valid.
+
+During allocation, the HOD may allocate the subject appropriately according to the actual academic context.
+
+Once an allocation is finalized for a particular applicable context, another faculty must not receive a conflicting allocation for that same subject/context/section.
+
+BUT:
+
+Do NOT globally disable the subject everywhere.
+
+Conflict must be scoped using the relevant academic identity:
+
+Institution
+Department
+Programme
+Class Type
+Semester
+Subject
+Section
+
+The same subject can legitimately exist in another department, programme, semester, or applicable context.
+
+The frontend must not simply say:
+
+"Data Mining is already allocated"
+
+without explaining/scoping where.
+
+==================================================
+11. DATA INTEGRITY
+==================================================
+
+Allocation records must reference real entities.
+
+Do not store arbitrary display names as the only identity.
+
+Use stable IDs/foreign keys for:
+- faculty
+- subject
+- workspace
+- section
+- programme
+- semester
+- department
+- institution
+
+Display names can be shown in the UI, but IDs establish relationships.
+
+==================================================
+12. HOD UI
+==================================================
+
+The HOD UI should be simple and operational rather than a decorative analytics dashboard.
+
+The HOD should be able to:
+
+1. See faculty.
+2. See preference status.
+3. Open faculty details.
+4. Review submitted subjects.
+5. Approve / Keep Pending / Deny.
+6. Allocate subject.
+7. Select section.
+8. Select Incharge-1 / Incharge-2.
+9. Enter theory hours.
+10. Enter practical/lab hours.
+11. See calculated total.
+12. See faculty workload/cap information.
+13. Correct invalid/incomplete allocations.
+14. Prepare the data for finalization.
+
+Avoid fake statistics.
+
+If statistics are displayed, calculate them from real database records.
+
+==================================================
+13. API / BACKEND
+==================================================
+
+Inspect existing APIs before adding new endpoints.
+
+Reuse and extend existing endpoints where appropriate.
+
+Do not duplicate existing functionality under new arbitrary routes.
+
+The backend should expose appropriate operations for:
+
+- retrieving faculty preferences
+- preference review/update
+- retrieving subjects/workspaces
+- creating/updating allocations
+- validating allocations
+- retrieving faculty workload/cap
+- checking subject/context conflicts
+
+Follow:
+
+Controller
+→ Service
+→ Repository
+
+Keep business rules in services/backend rather than scattering them across React components.
+
+Use typed Pydantic request/response schemas.
+
+No `any`.
+
+==================================================
+14. DATABASE TRANSACTION SAFETY
+==================================================
+
+Allocation creation/update must be safe against inconsistent states.
+
+Where multiple related records must change together, use appropriate transaction handling.
+
+Do not allow the frontend to appear successful when the database transaction failed.
+
+Return useful validation errors.
+
+==================================================
+15. CONTINUE, DON'T RESTART
+==================================================
+
+Before modifying anything:
+
+- inspect what Part 1 implemented
+- inspect existing models
+- inspect existing APIs
+- inspect frontend API clients
+- inspect current faculty/HOD pages
+- inspect any changes already made by previous Antigravity execution
+
+Preserve correct code.
+
+If an existing implementation already satisfies a requirement, do not rewrite it unnecessarily.
+
+If something is partially implemented, finish it.
+
+If something conflicts with this specification, update only the conflicting part.
+
+==================================================
+16. TESTING
+==================================================
+
+Test at minimum:
+
+1. Faculty submits preference.
+2. HOD sees the preference.
+3. HOD approves it.
+4. HOD can create allocation.
+5. Section is tied to actual workspace.
+6. Role is stored correctly.
+7. Theory/practical hours calculate correctly.
+8. Invalid hour values are rejected.
+9. Faculty hour cap is enforced.
+10. Two faculty can prefer the same subject.
+11. Conflicting allocation is prevented within the same applicable context.
+12. The same subject remains usable in unrelated valid contexts.
+13. Backend rejects unauthorized cross-department access.
+
+Use real database-backed workflow.
+
+Do not use mock state to make tests pass.
+
+==================================================
+EXECUTION METHOD
+==================================================
+
+IMPLEMENT → TEST → FIX → VERIFY.
+
+Do not spend the execution on a long explanation.
+
+At the end, provide only:
+- files changed
+- HOD workflow implemented
+- tests/checks performed
+- genuine remaining blockers
+
+STOP after the HOD review and allocation workflow is correctly implemented.
+
+Do NOT begin unrelated timetable generation.
+
+Part 3 will handle finalization, workload generation, PDF export, locking, end-to-end integration and final QA.
+CONTINUE FROM THE CURRENT IMPLEMENTATION.
+
+This is PART 3 OF 3 and the FINAL integration stage of the SRM UNIVERSITY WORKLOAD AND TIMETABLE ERP workflow.
+
+Do NOT restart the project.
+Do NOT rebuild the application.
+Do NOT discard Parts 1 or 2.
+Do NOT replace working implementation with mock data.
+
+First inspect the current state and identify what has already been implemented in Parts 1 and 2. Preserve correct work and implement/fix only what is missing.
+
+All requirements from Parts 1 and 2 remain binding.
+
+==================================================
+1. FINALIZATION CONCEPT
+==================================================
+
+The ERP must clearly distinguish:
+
+Faculty Preference
+→ HOD Review
+→ Allocation
+→ Finalization
+→ Workload
+
+Preference is only a request.
+
+Approval is only HOD review.
+
+Allocation assigns actual teaching responsibility.
+
+Finalization makes the allocation authoritative.
+
+Only after finalization should the final workload become the official workload dataset.
+
+Do not populate the official final workload merely because a faculty selected a subject.
+
+==================================================
+2. FINALIZE WORKLOAD
+==================================================
+
+The HOD must have a clear:
+
+FINALIZE ALLOCATION
+or
+FINALIZE WORKLOAD
+
+action at the appropriate stage.
+
+The button must remain disabled or unavailable until all required allocation conditions are satisfied.
+
+Do not use a fake percentage or static counter to enable finalization.
+
+The backend must determine whether finalization is valid.
+
+Before finalization, validate that:
+
+- required allocations are complete
+- allocated subjects reference valid subjects
+- faculty references are valid
+- workspace/context is valid
+- section is valid for that workspace
+- role is valid
+- theory hours are valid
+- practical/lab hours are valid
+- total hours are consistent
+- faculty workload does not exceed the applicable cap
+- conflicting allocations do not exist
+- required business rules are satisfied
+
+If anything is incomplete, finalization must fail safely with a useful reason.
+
+==================================================
+3. FINALIZATION MUST BE TRANSACTIONAL
+==================================================
+
+Finalization is a critical operation.
+
+It must be performed through the backend.
+
+Do not make finalization a frontend-only flag.
+
+The finalization operation should use an appropriate database transaction so that the system cannot end up in a partially finalized state.
+
+For example:
+
+If finalization updates:
+- allocation status
+- workload records
+- conflict/locking state
+
+those related operations must be handled consistently.
+
+If the transaction fails, the system must not report success.
+
+==================================================
+4. LOCK FINALIZED ALLOCATIONS
+==================================================
+
+After successful finalization:
+
+- the finalized allocation becomes authoritative
+- conflicting allocation attempts must be prevented
+- users must not accidentally edit finalized workload through normal allocation controls
+- faculty preferences remain as historical information
+- final workload is generated from finalized allocation data
+
+Do not delete preference history.
+
+Do not silently overwrite finalized allocations.
+
+If an edit/revision mechanism already exists, it must be explicit and properly authorized.
+
+==================================================
+5. WORKLOAD GENERATION
+==================================================
+
+After finalization, generate the workload from actual finalized allocation records.
+
+The workload must be calculated from database records.
+
+Do not create a second manually maintained workload dataset that can drift from allocations.
+
+The fundamental integrity rule is:
+
+STORED FINALIZED ALLOCATION DATA
+must equal
+GENERATED WORKLOAD DATA
+
+For each faculty, the workload should correctly reflect:
+- subject
+- section
+- role
+- theory hours
+- practical/lab hours
+- total hours
+- academic context
+
+The workload should be grouped/organized in a sheet-like manner that is understandable to university staff.
+
+==================================================
+6. WORKLOAD TALLY
+==================================================
+
+The ERP must guarantee that workload totals tally.
+
+For example:
+
+Theory allocation:
+3 hours
+
+Practical allocation:
+2 hours
+
+Total:
+5 hours
+
+The generated workload must report 5, not another value calculated from a separate frontend state.
+
+Do not allow:
+- stale totals
+- duplicate counting
+- missing allocations
+- double counting
+- manually entered totals overriding calculated totals
+
+The database should be the authoritative source.
+
+==================================================
+7. WORKLOAD VIEWER / MATRIX
+==================================================
+
+Provide a real workload viewer / class-wise matrix using finalized allocation data.
+
+The view should support the actual selected academic context.
+
+It must be possible to understand:
+
+Department
+Programme
+Year
+Semester
+Section
+Faculty
+Subject
+Class Type
+Role
+Theory Hours
+Practical Hours
+Total Hours
+
+Do not hardcode a matrix for one department or one section.
+
+The matrix must be generated dynamically.
+
+If the selected department has sections A/B/C, show those real sections.
+
+If another department has different sections, show those instead.
+
+==================================================
+8. FACULTY WORKLOAD
+==================================================
+
+The faculty member should be able to see their finalized workload.
+
+The workload must come from finalized backend data.
+
+Do not show unfinalized allocation as final workload.
+
+The faculty view should make it clear whether the displayed data is:
+
+Preference
+Pending Review
+Approved
+Allocated
+Finalized Workload
+
+Do not collapse all statuses into one.
+
+==================================================
+9. HOD FINAL WORKLOAD VIEW
+==================================================
+
+The HOD must be able to inspect the final workload after finalization.
+
+The HOD should be able to verify:
+
+- faculty
+- subject
+- section
+- role
+- theory
+- practical
+- total
+
+and the relevant academic context.
+
+This should be based on real records, not mock dashboard counters.
+
+==================================================
+10. PDF EXPORT
+==================================================
+
+Implement:
+
+EXPORT WORKLOAD AS PDF
+
+The PDF must be generated from actual finalized database workload data.
+
+Do not generate a fake/static PDF.
+
+The exported document should be suitable for a university workload sheet.
+
+It should clearly contain relevant information such as:
+
+SRM UNIVERSITY
+WORKLOAD AND TIMETABLE PORTAL
+
+Institution
+Department
+Programme
+Year
+Semester
+Section where applicable
+
+Faculty information
+
+Subject allocation details
+
+Theory Hours
+Practical/Lab Hours
+Total Hours
+
+Workload totals
+
+The exact layout should follow the existing project/reference documentation where applicable, while remaining generated from live data.
+
+Do not hardcode actual faculty/subject/hour values into the PDF service.
+
+Inspect the existing `pdf_service.py` and preserve useful existing implementation.
+
+If it was partially modified by a previous interrupted execution, inspect it carefully before changing it.
+
+==================================================
+11. PDF DATA INTEGRITY
+==================================================
+
+The PDF values must come from the same finalized records shown in the workload viewer.
+
+Do not have:
+
+UI total = 18
+PDF total = 16
+database total = 20
+
+All must derive from the same authoritative finalized data.
+
+Where appropriate, add server-side calculation/query logic rather than trusting values supplied by the browser.
+
+==================================================
+12. GLOBAL DATA ISOLATION
+==================================================
+
+The application must work across the entire university.
+
+Examples:
+
+E&T
+Flabs
+Management
+B-Arch
+
+and different:
+- departments
+- programmes
+- years
+- semesters
+- sections
+- faculty
+
+Data must not leak between unrelated contexts.
+
+A user cannot obtain another department's data simply by changing a workspace ID or API parameter.
+
+Authorization must be enforced in the backend.
+
+Never depend solely on frontend hiding.
+
+==================================================
+13. WORKSPACE ISOLATION
+==================================================
+
+Workspace/context identity is important.
+
+A workspace represents the selected academic context.
+
+Do not use:
+
+"Section A"
+
+as the identity.
+
+Use a stable workspace/context identifier and validate that:
+- institution belongs to workspace
+- department belongs to workspace
+- programme belongs to workspace
+- semester belongs to workspace
+- section belongs to workspace
+
+Reject inconsistent combinations.
+
+For example, a request must not be able to combine:
+Department A
+with
+Programme B
+and
+Section C
+
+unless that combination actually exists in the database.
+
+==================================================
+14. SUBJECT CONFLICT FINAL CHECK
+==================================================
+
+Before finalization, perform a complete conflict validation.
+
+Multiple preferences for the same subject are allowed.
+
+Multiple allocations are allowed only where they are legitimately distinct according to the academic context and section/business rules.
+
+A finalized allocation must block an incompatible allocation in the same applicable context.
+
+Do not globally block the subject across the university.
+
+The conflict check must use stable IDs and relevant scope rather than only subject names.
+
+==================================================
+15. FACULTY CAP FINAL CHECK
+==================================================
+
+Before finalization, recalculate faculty workload from the actual allocation records.
+
+Compare against the applicable designation-based cap.
+
+Do not trust a frontend-calculated total.
+
+If the cap is exceeded:
+- prevent finalization
+- show the faculty member
+- show the calculated allocated workload
+- show the applicable cap
+- explain the problem
+
+The system must never finalize an invalid workload merely because the UI previously allowed it.
+
+==================================================
+16. REMOVE OLD MOCK IMPLEMENTATION
+==================================================
+
+Now perform a final audit for obsolete mock state.
+
+Search for and remove or disconnect obsolete mechanisms such as:
+
+- workload-store.ts
+- fake faculty arrays
+- fake subjects
+- fake allocation arrays
+- hardcoded metrics
+- hardcoded section lists
+- static workload totals
+- fake preference status
+- demo-only allocation state that bypasses APIs
+
+Do not delete useful code blindly.
+
+If a file is still legitimately used for a valid purpose, keep it.
+
+The goal is:
+
+DATABASE → BACKEND API → FRONTEND
+
+not:
+
+DATABASE → partial API
+plus
+FRONTEND MOCK STATE
+
+==================================================
+17. API CLIENT CLEANUP
+==================================================
+
+Verify frontend API access is centralized appropriately.
+
+Use Axios.
+
+Use typed request/response interfaces.
+
+No `any`.
+
+Remove hardcoded API parameters such as:
+
+getClassMatrix(1)
+
+if the `1` represents a fixed workspace/context that should instead come from the currently selected academic context.
+
+The current workspace/context must flow dynamically through the application.
+
+==================================================
+18. END-TO-END WORKFLOW TEST
+==================================================
+
+Perform a complete realistic test.
+
+Use this scenario:
+
+1. Login as Faculty.
+2. Select an institution.
+3. Select the faculty profile.
+4. Enter the faculty workspace.
+5. Select odd/even semester as applicable.
+6. Select an actual programme.
+7. View actual subjects.
+8. Select required Core.
+9. Select required Elective.
+10. Optionally select Minor/Multidisciplinary.
+11. Submit preference.
+12. Verify preference is stored.
+13. Login as HOD.
+14. Open the correct department/workspace.
+15. Find the faculty.
+16. View submitted preference.
+17. Approve it.
+18. Open allocation.
+19. Select subject.
+20. Select real section.
+21. Select Incharge-1 or Incharge-2.
+22. Enter theory hours.
+23. Enter practical/lab hours.
+24. Verify total.
+25. Verify faculty cap.
+26. Save allocation.
+27. Verify database state.
+28. Complete required allocations.
+29. Attempt finalization.
+30. Backend validates everything.
+31. Finalization succeeds.
+32. Finalized records become authoritative.
+33. Workload viewer displays the finalized allocation.
+34. Faculty sees finalized workload.
+35. HOD sees finalized workload.
+36. Export PDF.
+37. Verify PDF values match database/workload viewer.
+
+==================================================
+19. NEGATIVE TESTS
+==================================================
+
+Also test important failure cases:
+
+- invalid login
+- unauthorized department access
+- invalid workspace ID
+- invalid section for workspace
+- invalid subject/workspace combination
+- theory hours above maximum
+- practical hours above maximum
+- negative hours
+- workload cap exceeded
+- conflicting finalized allocation
+- incomplete allocation
+- finalization attempted before requirements are complete
+- unauthorized attempt to modify another faculty member's allocation
+- unauthorized attempt to access another institution
+- attempting to edit finalized data without an explicit authorized revision workflow
+
+The backend must reject invalid operations.
+
+==================================================
+20. RESPONSIVE UI
+==================================================
+
+Verify the major screens remain usable on:
+
+- desktop
+- laptop
+- tablet
+- mobile
+
+The system is an ERP, so clarity and usability matter more than decorative animations.
+
+Use clear labels and readable tables.
+
+Do not sacrifice workflow clarity for visual effects.
+
+==================================================
+21. FINAL UI PRINCIPLE
+==================================================
+
+The application should always make the user's current context obvious.
+
+A user should be able to understand:
+
+Institution
+Department
+Programme
+Year
+Semester
+Section
+Role
+
+without guessing.
+
+Avoid confusing screens where the user cannot tell which academic workspace they are modifying.
+
+==================================================
+22. FINAL ARCHITECTURE AUDIT
+==================================================
+
+Before declaring completion, inspect:
+
+Backend:
+- models
+- schemas
+- controllers
+- services
+- repositories
+- authentication
+- authorization
+- transactions
+- validation
+
+Frontend:
+- pages
+- components
+- API clients
+- TypeScript interfaces
+- state management
+- forms
+- workflow statuses
+- loading/error states
+- responsive behavior
+
+Database:
+- foreign keys
+- workspace relationships
+- faculty relationships
+- subject relationships
+- preference relationships
+- allocation relationships
+- finalization state
+
+Remove obvious duplication and broken dead paths where safe.
+
+Do not perform a massive rewrite simply for style.
+
+==================================================
+23. FINAL ACCEPTANCE CONDITIONS
+==================================================
+
+The project is considered functionally complete for this workload workflow only when:
+
+1. Faculty can submit real preferences.
+2. Multiple faculty can prefer the same subject.
+3. HOD can review those preferences.
+4. HOD can approve/keep pending/deny.
+5. HOD can create real allocations.
+6. Allocation includes real workspace/section.
+7. Allocation includes Incharge-1/Incharge-2.
+8. Theory and practical hours are stored correctly.
+9. Total hours are calculated correctly.
+10. Faculty hour caps are enforced.
+11. Subject conflicts are scoped correctly.
+12. Finalization is backend validated.
+13. Finalized allocations become authoritative.
+14. Workload is generated from finalized data.
+15. Workload totals tally with allocation data.
+16. Faculty can view finalized workload.
+17. HOD can view finalized workload.
+18. PDF export uses real finalized data.
+19. Unauthorized cross-context access is rejected.
+20. Mock/static workload state is no longer driving the application.
+21. The workflow works dynamically across institutions, departments, programmes, years, semesters and sections.
+22. The system does not depend on MCA-only hardcoded data.
+
+==================================================
+24. IMPORTANT EXECUTION BEHAVIOUR
+==================================================
+
+Do NOT stop after merely changing frontend visuals.
+
+Do NOT declare success because files compile.
+
+Actually trace the workflow:
+
+UI
+→ API
+→ backend service
+→ repository
+→ database
+→ response
+→ UI
+
+and verify that the complete path works.
+
+If you encounter an existing bug, fix it if it is directly related to this workflow.
+
+If you encounter an unrelated issue, do not spend the entire execution rewriting unrelated areas.
+
+If execution is interrupted, preserve the work already completed so the next execution can continue safely.
+
+Use:
+
+IMPLEMENT → TEST → FIX → VERIFY.
+
+Do not provide a long theoretical explanation.
+
+At the end, report concisely:
+
+- files changed
+- major functionality completed
+- tests performed
+- any remaining genuine blocker
+- whether the end-to-end Faculty → HOD → Allocation → Finalization → Workload → PDF workflow was verified
+
+Do not claim something is verified if it was not actually tested.

@@ -1,0 +1,55 @@
+﻿--- Extracting Screenshot_2026-09-20-01-44-08-44_e2d5b3f32b79de1d45acd1fad96fbb0f-compressed (1).pdf ---
+
+
+
+
+
+... (truncated)
+
+--- Extracting SRM_University_Workload_Timetable_ERP_Requirements_Documentation_v0.1 (1).docx ---
+SRM UNIVERSITY
+WORKLOAD AND TIMETABLE PORTAL
+Universal University Academic Workload & Timetable ERP
+Requirements & Functional Documentation ù Version 0.1
+
+
+Prepared from the user-provided workload/timetable requirements document and the attached timetable reference image.
+
+1. Purpose and Vision
+The proposed application is a universal, institution-wide ERP portal for SRM University focused on academic workload allocation, workload management, curriculum allocation, and timetable generation and management.
+The system is intended to replace fragmented/manual academic workload and timetable processes with a live, dynamic, centralized application that can serve numerous departments, programs, hundreds of faculty members, department coordinators/HoDs, administrators, and senior academic stakeholders.
+The application must remain configurable because academic structures, workload requirements, faculty assignments, subjects, rooms, timings, and timetable rules may differ between departments, programs, semesters, academic years, and faculty members.
+1.1 Core Objectives
+Provide a centralized workload and timetable platform for the whole institution.
+Allow authorized administrators to manage academic and faculty data.
+Allow faculty to submit subject preferences through a willingness-form-style workflow.
+Allow administrators to review, approve, keep pending, deny, and ultimately allocate subjects to faculty.
+Generate faculty workload information from finalized allocations.
+Simultaneously generate the Class-Wise Curriculum Allocation Matrix from the same allocation data.
+Generate conflict-free class/section timetables and individual faculty timetables using configured academic rules and constraints.
+Provide live access to workload, assigned subjects, and personal timetables.
+Preserve historical records and changes across departments, faculty, allocations, workload, and timetables.
+Provide PDF export of generated workload information.
+2. Intended Users and Scope
+2.1 Primary User G
+... (truncated)
+
+--- Extracting Untitled spreadsheet (1).xlsx ---
+Sheet: CW WITH OUT NEW  
+       Unnamed: 0                   Unnamed: 1                Unnamed: 2                Unnamed: 3                Unnamed: 4               Unnamed: 5            Unnamed: 6  Unnamed: 7      Unnamed: 8             Unnamed: 9        Unnamed: 10            Unnamed: 11            Unnamed: 12  Unnamed: 13  Unnamed: 14  Unnamed: 15  Unnamed: 16  Unnamed: 17  Unnamed: 18
+0   I MCA  GEN  1        A SEC /  Mrs M.Divya                        NaN  B SEC / Dr K.Kottaisamy                        NaN                      NaN                   NaN         NaN  II MCA GEN AI    A SEC / Dr M Sowmya                 NaN            B SEC / Dr                     NaN          NaN          NaN          NaN          NaN          NaN          NaN
+1             NaN                        Main                      Asst                       Main                     Asst                       NaN                   NaN         NaN             NaN                  Main               Asst                    Main                  Asst           NaN          NaN          NaN          NaN          NaN          NaN
+2           JAVA                  Mrs M.Divya            Dr S.Chithra             Dr.S.Meenakshi              Dr D.Kanchana                        14                     6         8.0             DCN            Dr M.Sowmya       Mrs M.Divya       Dr R. Sivasankari  Dr. N. Krishnamoorthy         14.0          6.0          8.0          NaN          NaN          NaN
+3            DSA                    Dr R.Priya                       NaN                     TINA                        NaN                        8                     8         0.0             CQC       Dr K.Kottaisamy                 NaN       Dr. R.Agusthiyar                    NaN          8.0          8.0          NaN          NaN          NaN          NaN
+4            DBT         Dr. N. Krishnamoorthy                     TINA          Dr R. Sivasankari                Dr R.Priya                     
+... (truncated)
+
+--- Extracting Untitled spreadsheet.xlsx ---
+Sheet: wl edit 
+   SRM INSTITUTE OF SCIENCE AND TECHNOLOGY\nRAMAPURAM CAMPUS\nFaculty of Liberal Arts and Business Studies\n(A Place for Transformation)\nSchool of Applied Sciences\nComputer Applications û PG ( MCA & MCA GEN AI)\nSTAFF WORKLOAD FOR ACADEMIC YEAR 2026-2027 - ODD SEMESTER                                      Unnamed: 1                                 Unnamed: 2                                                    Unnamed: 3         Unnamed: 4 Unnamed: 5 Unnamed: 6 Unnamed: 7 Unnamed: 8
+0                                                                                                                                                                                                                                                                           NaN                                             NaN                                        NaN                                                           NaN                NaN        NaN        NaN        NaN        NaN
+1                                                                                                                                                                                                                                                                           NaN                                             NaN                                        NaN                                                           NaN                NaN        NaN        NaN        NaN        NaN
+2                                                                                                                                                                                                                                                                          S.No                                      Staff Name                               Subject Code                                                   Course Name    Class & Section  No of Stu     Theory  Practical     Hours 
+3                               
+... (truncated)
+

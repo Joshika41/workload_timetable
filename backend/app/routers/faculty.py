@@ -179,6 +179,11 @@ def get_faculty_detail(
                 prog = db.query(Programme).filter(Programme.id == offering.programme_id).first()
                 prog_name = prog.name if prog else ""
                 semester = offering.semester
+
+            sem_type = "ODD" if semester % 2 != 0 else "EVEN"
+            if offering and getattr(offering, "semester_type", None):
+                val = offering.semester_type
+                sem_type = val.value if hasattr(val, "value") else str(val)
             
             prefs.append({
                 "id": item.id,
@@ -188,6 +193,7 @@ def get_faculty_detail(
                 "class_type": prog_name,
                 "course_type": subj.category,
                 "semester": semester,
+                "semester_type": sem_type,
                 "theory_hours": subj.theory_hours,
                 "practical_hours": subj.practical_hours,
                 "decision": item.decision.value if item.decision else "PENDING",

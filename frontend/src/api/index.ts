@@ -21,7 +21,8 @@ export const academicApi = {
 };
 
 export const facultyApi = {
-  getHODFacultyList: () => apiClient.get('/faculty/hod').then(r => r.data),
+  getHODFacultyList: (semesterType?: string) =>
+    apiClient.get('/faculty/hod', { params: semesterType ? { semester_type: semesterType } : {} }).then(r => r.data),
 };
 
 // ── Auth

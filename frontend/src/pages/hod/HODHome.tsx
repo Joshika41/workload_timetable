@@ -37,11 +37,11 @@ export default function HODHome() {
 
   useEffect(() => {
     setIsLoading(true);
-    facultyApi.getHODFacultyList()
+    facultyApi.getHODFacultyList(ctx?.semesterType)
       .then(setFaculty)
       .catch(() => toast.error('Failed to load faculty list'))
       .finally(() => setIsLoading(false));
-  }, []);
+  }, [ctx?.semesterType]);
 
   const handleFinalize = async () => {
     if (!window.confirm("Are you sure you want to finalize the workload for the department? This will lock all current allocations.")) return;
@@ -50,7 +50,7 @@ export default function HODHome() {
       const res = await apiClient.post('/workload/finalize/department');
       toast.success(res.data.message || 'Workload finalized.');
       // Refresh faculty list
-      const data = await facultyApi.getHODFacultyList();
+      const data = await facultyApi.getHODFacultyList(ctx?.semesterType);
       setFaculty(data);
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Failed to finalize workload.');
@@ -66,7 +66,7 @@ export default function HODHome() {
       const res = await apiClient.post('/workload/reopen/department');
       toast.success(res.data.message || 'Workload reopened.');
       // Refresh faculty list
-      const data = await facultyApi.getHODFacultyList();
+      const data = await facultyApi.getHODFacultyList(ctx?.semesterType);
       setFaculty(data);
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Failed to reopen workload.');
@@ -267,7 +267,7 @@ export default function HODHome() {
           onClose={() => {
             setSelectedFacultyId(null);
             // Refresh the faculty list when modal closes to reflect any allocation changes
-            facultyApi.getHODFacultyList().then(setFaculty);
+            facultyApi.getHODFacultyList(ctx?.semesterType).then(setFaculty);
           }} 
         />
       )}

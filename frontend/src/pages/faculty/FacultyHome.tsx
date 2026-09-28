@@ -37,8 +37,39 @@ export default function FacultyHome() {
   const [selectedMap, setSelectedMap] = useState<Record<number, number[]>>({});
   const [submittedPrefs, setSubmittedPrefs] = useState<Record<number, boolean>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [oddStatus, setOddStatus] = useState<{ submitted: boolean; count: number; semList: number[] }>({ submitted: false, count: 0, semList: [] });
+  const [evenStatus, setEvenStatus] = useState<{ submitted: boolean; count: number; semList: number[] }>({ submitted: false, count: 0, semList: [] });
 
   const ctx = session?.context;
+
+  const loadOverview = async () => {
+    try {
+      const [oddRes, evenRes] = await Promise.all([
+        apiClient.get<SemesterGroup[]>('/faculty/my-semesters', { params: { semester_type: 'ODD' } }),
+        apiClient.get<SemesterGroup[]>('/faculty/my-semesters', { params: { semester_type: 'EVEN' } }),
+      ]);
+      const oddSubmitted = oddRes.data.filter(g => g.is_submitted);
+      const evenSubmitted = evenRes.data.filter(g => g.is_submitted);
+      setOddStatus({
+        submitted: oddSubmitted.length > 0,
+        count: oddSubmitted.length,
+        semList: oddSubmitted.map(g => g.semester_number),
+      });
+      setEvenStatus({
+        submitted: evenSubmitted.length > 0,
+        count: evenSubmitted.length,
+        semList: evenSubmitted.map(g => g.semester_number),
+      });
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    if (ctx) {
+      loadOverview();
+    }
+  }, [ctx]);
 
   useEffect(() => {
     if (semType && ctx) {
@@ -112,6 +143,7 @@ export default function FacultyHome() {
       });
       toast.success(`Preferences submitted for Semester ${semGroup.semester_number}! ✅`);
       setSubmittedPrefs(p => ({ ...p, [semGroup.semester_number]: true }));
+      loadOverview();
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } };
       toast.error(axiosErr.response?.data?.detail || 'Failed to submit preferences.');
@@ -149,18 +181,58 @@ export default function FacultyHome() {
         </div>
 
         {/* Preference Status */}
-        <div className="card" style={{ padding: '20px', marginBottom: '24px' }}>
-          <h3 style={{ fontSize: '14px', fontWeight: 700, color: '#0F172A', marginBottom: '8px' }}>📝 Your Status</h3>
-          <p style={{ fontSize: '13px', color: '#64748B' }}>Preference Not Submitted — Please select a semester type below to begin.</p>
+        <div className="card" style={{ padding: '20px 24px', marginBottom: '24px', borderRadius: '12px', border: '1px solid #E2E8F0', background: '#FFFFFF' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#0F172A', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>📝</span> Your Submission Status
+            </h3>
+            <span style={{ fontSize: '12px', color: '#64748B', fontWeight: 600 }}>AY {ctx.academicYear}</span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginTop: '12px' }}>
+            <div style={{ padding: '14px 16px', borderRadius: '10px', background: oddStatus.submitted ? '#F0FDF4' : '#F8FAFC', border: `1px solid ${oddStatus.submitted ? '#BBF7D0' : '#E2E8F0'}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: '#1E293B' }}>ODD Term (Semesters 1, 3, 5)</span>
+                <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', background: oddStatus.submitted ? '#DCFCE7' : '#F1F5F9', color: oddStatus.submitted ? '#166534' : '#64748B' }}>
+                  {oddStatus.submitted ? 'Submitted' : 'Pending'}
+                </span>
+              </div>
+              <p style={{ fontSize: '12px', color: oddStatus.submitted ? '#15803D' : '#64748B', margin: 0 }}>
+                {oddStatus.submitted ? `Preferences submitted for Semester ${oddStatus.semList.join(', ')}.` : 'Not submitted yet. Select ODD Semester below to choose subjects.'}
+              </p>
+            </div>
+
+            <div style={{ padding: '14px 16px', borderRadius: '10px', background: evenStatus.submitted ? '#F0FDF4' : '#F8FAFC', border: `1px solid ${evenStatus.submitted ? '#BBF7D0' : '#E2E8F0'}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                <span style={{ fontSize: '13px', fontWeight: 700, color: '#1E293B' }}>EVEN Term (Semesters 2, 4, 6)</span>
+                <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', background: evenStatus.submitted ? '#DCFCE7' : '#F1F5F9', color: evenStatus.submitted ? '#166534' : '#64748B' }}>
+                  {evenStatus.submitted ? 'Submitted' : 'Pending'}
+                </span>
+              </div>
+              <p style={{ fontSize: '12px', color: evenStatus.submitted ? '#15803D' : '#64748B', margin: 0 }}>
+                {evenStatus.submitted ? `Preferences submitted for Semester ${evenStatus.semList.join(', ')}.` : 'Not submitted yet. Select EVEN Semester below to choose subjects.'}
+              </p>
+            </div>
+          </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', maxWidth: '600px' }}>
-          <button onClick={() => setSemType('ODD')} style={semCardStyle}>
+          <button onClick={() => setSemType('ODD')} style={{ ...semCardStyle, position: 'relative' }}>
+            <div style={{ position: 'absolute', top: '12px', right: '12px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '999px', background: oddStatus.submitted ? '#DCFCE7' : '#F1F5F9', color: oddStatus.submitted ? '#166534' : '#64748B' }}>
+                {oddStatus.submitted ? '✓ Submitted' : 'Pending'}
+              </span>
+            </div>
             <div style={{ fontSize: '36px', marginBottom: '12px' }}>📚</div>
             <div style={{ fontSize: '18px', fontWeight: 800, color: '#002147', marginBottom: '6px' }}>ODD Semester</div>
             <div style={{ fontSize: '12px', color: '#64748B' }}>Semesters 1, 3, 5</div>
           </button>
-          <button onClick={() => setSemType('EVEN')} style={semCardStyle}>
+          <button onClick={() => setSemType('EVEN')} style={{ ...semCardStyle, position: 'relative' }}>
+            <div style={{ position: 'absolute', top: '12px', right: '12px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 8px', borderRadius: '999px', background: evenStatus.submitted ? '#DCFCE7' : '#F1F5F9', color: evenStatus.submitted ? '#166534' : '#64748B' }}>
+                {evenStatus.submitted ? '✓ Submitted' : 'Pending'}
+              </span>
+            </div>
             <div style={{ fontSize: '36px', marginBottom: '12px' }}>📖</div>
             <div style={{ fontSize: '18px', fontWeight: 800, color: '#002147', marginBottom: '6px' }}>EVEN Semester</div>
             <div style={{ fontSize: '12px', color: '#64748B' }}>Semesters 2, 4, 6</div>
@@ -188,7 +260,7 @@ export default function FacultyHome() {
       </div>
 
       {/* Back button */}
-      <button onClick={() => { setSemType(null); setSemesterGroups([]); setExpandedSem(null); }}
+      <button onClick={() => { setSemType(null); setSemesterGroups([]); setExpandedSem(null); loadOverview(); }}
         style={{ background: 'none', border: 'none', color: '#002147', fontWeight: 700, fontSize: '14px', cursor: 'pointer', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
         ← Back to Semester Type
       </button>

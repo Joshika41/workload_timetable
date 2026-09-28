@@ -235,21 +235,20 @@ def get_faculty_semesters(
         
         sem = db.query(Semester).filter(Semester.semester_number == sem_num).first()
         if sem and ay and fp:
-            ws = db.query(AcademicWorkspace).filter(
+            # Match submission across any workspace in this faculty's department for this semester
+            subm = db.query(PreferenceSubmission).join(
+                AcademicWorkspace, PreferenceSubmission.workspace_id == AcademicWorkspace.id
+            ).filter(
                 AcademicWorkspace.department_id == current_user.department_id,
-                AcademicWorkspace.programme_id == prog_id,
-                AcademicWorkspace.semester_id == sem.id
+                AcademicWorkspace.semester_id == sem.id,
+                PreferenceSubmission.faculty_id == fp.id
             ).first()
-            if ws:
-                is_fin = (ws.workflow_state.name == "FINALIZED")
-                subm = db.query(PreferenceSubmission).filter(
-                    PreferenceSubmission.workspace_id == ws.id,
-                    PreferenceSubmission.faculty_id == fp.id
-                ).first()
-                if subm:
-                    is_sub = True
-                    items = db.query(PreferenceItem).filter(PreferenceItem.submission_id == subm.id).all()
-                    sel_subs = [it.subject_id for it in items]
+            if subm:
+                is_sub = True
+                items = db.query(PreferenceItem).filter(PreferenceItem.submission_id == subm.id).all()
+                sel_subs = [it.subject_id for it in items]
+                if subm.workspace:
+                    is_fin = (subm.workspace.workflow_state == WorkspaceWorkflowStateEnum.FINALIZED)
 
         result.append({
             "semester_number": sem_num,
@@ -272,11 +271,14 @@ def submit_preferences_direct(
 ):
     """Direct preference submission: takes semester_number, programme_id, subject_ids."""
     from app.models.domain import (
-        FacultyProfile, PreferenceItem, CurriculumOffering, AcademicYear
+        FacultyProfile, PreferenceItem, CurriculumOffering, AcademicYear, Semester, Programme
     )
     from datetime import datetime
     
-    semester_number = payload.get("semester_number")
+    raw_sem_num = payload.get("semester_number")
+    if raw_sem_num is None:
+        raise HTTPException(status_code=400, detail="semester_number is required.")
+    semester_number = int(raw_sem_num)
     programme_id = payload.get("programme_id")
     subject_ids = payload.get("subject_ids", [])
     
@@ -300,12 +302,13 @@ def submit_preferences_direct(
     if not ay:
         raise HTTPException(status_code=500, detail="No academic year configured.")
     
-    # Find workspace for this context
-    from app.models.domain import Semester
+    # Find semester
     sem = db.query(Semester).filter(Semester.semester_number == semester_number).first()
+    if not sem:
+        raise HTTPException(status_code=404, detail=f"Semester {semester_number} not found.")
     
     workspace = None
-    if sem:
+    if programme_id:
         workspace = db.query(AcademicWorkspace).filter(
             AcademicWorkspace.programme_id == programme_id,
             AcademicWorkspace.semester_id == sem.id,
@@ -313,23 +316,39 @@ def submit_preferences_direct(
         ).first()
     
     if not workspace:
-        # Create workspace dynamically
-        import json, base64
-        ctx = {
-            "d": current_user.department_id,
-            "p": programme_id,
-            "py": (semester_number + 1) // 2,
-            "y": ay.id,
-            "s": sem.id if sem else 1
-        }
-        ws_id = base64.b64encode(json.dumps(ctx).encode()).decode()
+        # Fallback to any existing workspace for this department and semester
+        workspace = db.query(AcademicWorkspace).filter(
+            AcademicWorkspace.department_id == current_user.department_id,
+            AcademicWorkspace.semester_id == sem.id,
+        ).first()
+    
+    if not workspace:
+        # Create workspace dynamically with standard URL-safe encode
+        from app.core.workspace import WorkspaceContext, encode_workspace_id
+        target_prog = None
+        if programme_id:
+            target_prog = db.query(Programme).filter(Programme.id == programme_id).first()
+        if not target_prog:
+            target_prog = db.query(Programme).filter(Programme.department_id == current_user.department_id).first()
+        target_prog_id = target_prog.id if target_prog else 1
+        
+        prog_year = (semester_number + 1) // 2
+        ctx = WorkspaceContext(
+            department_id=current_user.department_id,
+            programme_id=target_prog_id,
+            programme_year=prog_year,
+            academic_year_id=ay.id,
+            semester=semester_number,
+        )
+        ws_id = encode_workspace_id(ctx)
         workspace = AcademicWorkspace(
             id=ws_id,
             department_id=current_user.department_id,
-            programme_id=programme_id,
+            programme_id=target_prog_id,
             academic_year_id=ay.id,
-            semester_id=sem.id if sem else 1,
-            programme_year=(semester_number + 1) // 2,
+            semester_id=sem.id,
+            programme_year=prog_year,
+            workflow_state=WorkspaceWorkflowStateEnum.PREFERENCES,
         )
         db.add(workspace)
         db.flush()
@@ -343,24 +362,35 @@ def submit_preferences_direct(
     if not fp:
         raise HTTPException(status_code=404, detail="Faculty profile not found.")
     
-    # Check for existing submission
+    # Check for existing submission in this workspace or semester
     existing = db.query(PreferenceSubmission).filter(
         PreferenceSubmission.faculty_id == fp.id,
         PreferenceSubmission.workspace_id == workspace.id,
     ).first()
     
+    if not existing:
+        existing = db.query(PreferenceSubmission).join(
+            AcademicWorkspace, PreferenceSubmission.workspace_id == AcademicWorkspace.id
+        ).filter(
+            AcademicWorkspace.department_id == current_user.department_id,
+            AcademicWorkspace.semester_id == sem.id,
+            PreferenceSubmission.faculty_id == fp.id,
+        ).first()
+    
     if existing:
-        # Update existing submission
-        for item in existing.items:
-            db.delete(item)
+        # Update existing submission: properly clear relationship collection
+        existing.items.clear()
+        db.flush()
         for idx, sid in enumerate(subject_ids):
             item = PreferenceItem(
                 submission_id=existing.id,
                 subject_id=sid,
                 rank=idx + 1,
+                decision=PreferenceStatusEnum.PENDING,
             )
-            db.add(item)
+            existing.items.append(item)
         existing.status = PreferenceStatusEnum.SUBMITTED
+        existing.review_status = PreferenceStatusEnum.PENDING
         existing.submitted_at = datetime.utcnow()
     else:
         # Create new submission
@@ -368,6 +398,7 @@ def submit_preferences_direct(
             faculty_id=fp.id,
             workspace_id=workspace.id,
             status=PreferenceStatusEnum.SUBMITTED,
+            review_status=PreferenceStatusEnum.PENDING,
             submitted_at=datetime.utcnow(),
         )
         db.add(sub)
@@ -378,8 +409,9 @@ def submit_preferences_direct(
                 submission_id=sub.id,
                 subject_id=sid,
                 rank=idx + 1,
+                decision=PreferenceStatusEnum.PENDING,
             )
-            db.add(item)
+            sub.items.append(item)
     
     db.commit()
     return {"message": "Preferences submitted successfully."}

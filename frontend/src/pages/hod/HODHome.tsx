@@ -37,11 +37,11 @@ export default function HODHome() {
 
   useEffect(() => {
     setIsLoading(true);
-    facultyApi.getHODFacultyList(ctx?.semesterType)
+    facultyApi.getHODFacultyList(session?.context?.semesterType)
       .then(setFaculty)
       .catch(() => toast.error('Failed to load faculty list'))
       .finally(() => setIsLoading(false));
-  }, [ctx?.semesterType]);
+  }, [session?.context?.semesterType]);
 
   const handleFinalize = async () => {
     if (!window.confirm("Are you sure you want to finalize the workload for the department? This will lock all current allocations.")) return;
@@ -50,7 +50,7 @@ export default function HODHome() {
       const res = await apiClient.post('/workload/finalize/department');
       toast.success(res.data.message || 'Workload finalized.');
       // Refresh faculty list
-      const data = await facultyApi.getHODFacultyList(ctx?.semesterType);
+      const data = await facultyApi.getHODFacultyList(session?.context?.semesterType);
       setFaculty(data);
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Failed to finalize workload.');

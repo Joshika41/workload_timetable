@@ -28,6 +28,7 @@ const STATUS_CHIP: Record<string, { bg: string; color: string }> = {
 
 export default function HODHome() {
   const { session, updateContext } = useAuth();
+  const ctx = session?.context;
   const navigate = useNavigate();
   const [faculty, setFaculty] = useState<FacultyRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -90,9 +91,7 @@ export default function HODHome() {
     }
   };
 
-  if (!session) return null;
-  const ctx = session.context;
-
+  if (!session || !ctx) return null;
   const allSubmitted = faculty.length > 0 && faculty.every(f => f.preference_status !== 'Not Submitted');
 
   return (

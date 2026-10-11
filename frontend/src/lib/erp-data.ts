@@ -10,23 +10,9 @@ export interface Faculty {
   maxHours: number;
 }
 
-export const DEPARTMENTS = [
-  "PG Department of Computer Applications - MCA",
-  "Department of Computer Science & Engineering",
-  "Department of Information Technology",
-  "Department of Artificial Intelligence & Data Science",
-];
+export const DEPARTMENTS: string[] = [];
 
-export const SECTIONS = [
-  "MCA I-A",
-  "MCA I-B",
-  "MCA II-A",
-  "MCA II-B",
-  "MCA Gen AI A",
-  "MCA Gen AI B",
-  "MCA Cyber A",
-  "MCA Cyber B",
-];
+export const SECTIONS: string[] = [];
 
 export const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 
@@ -39,31 +25,9 @@ export const PERIODS = [
   "P6 · 02:25",
 ];
 
-export const FACULTY: Faculty[] = [
-  { id: "SRM-MCA-101", name: "Dr. Priya Ramesh", department: "MCA", theoryHours: 4, labHours: 4, inchargeHours: 2, maxHours: 18 },
-  { id: "SRM-MCA-102", name: "Dr. Arun Kumar", department: "MCA", theoryHours: 4, labHours: 2, inchargeHours: 0, maxHours: 18 },
-  { id: "SRM-MCA-103", name: "Prof. Meenakshi S", department: "MCA", theoryHours: 2, labHours: 4, inchargeHours: 2, maxHours: 16 },
-  { id: "SRM-MCA-104", name: "Dr. Vignesh Balaji", department: "MCA", theoryHours: 4, labHours: 4, inchargeHours: 0, maxHours: 20 },
-  { id: "SRM-MCA-105", name: "Prof. Kavitha Nair", department: "MCA", theoryHours: 1, labHours: 4, inchargeHours: 2, maxHours: 16 },
-  { id: "SRM-MCA-106", name: "Dr. Suresh Iyer", department: "MCA", theoryHours: 4, labHours: 2, inchargeHours: 2, maxHours: 18 },
-  { id: "SRM-CSE-201", name: "Dr. Anand Krishnan", department: "CSE", theoryHours: 2, labHours: 4, inchargeHours: 0, maxHours: 18 },
-  { id: "SRM-CSE-202", name: "Prof. Divya Prakash", department: "CSE", theoryHours: 4, labHours: 4, inchargeHours: 2, maxHours: 20 },
-];
+export const FACULTY: Faculty[] = [];
 
-export const SUBJECTS = [
-  "Advanced Algorithms",
-  "Distributed Systems",
-  "Machine Learning",
-  "Cloud Computing",
-  "Software Architecture",
-  "Data Visualization",
-  "Generative AI Foundations",
-  "Cyber Forensics",
-  "JAVA LAB",
-  "PYTHON LAB",
-  "DBMS LAB",
-  "ML LAB",
-];
+export const SUBJECTS: string[] = [];
 
 const VENUES = ["Room 103", "Room 104", "Room 205", "Room 206", "Seminar Hall"];
 const LABS = ["Lab 1", "Lab 2", "IN2", "IN3"];

@@ -6,13 +6,14 @@ import { ArrowLeft, BookOpen, CheckCircle, ListPlus, GraduationCap, AlertCircle 
 import { academicApi } from '@/api/academicApi';
 import { apiClient } from '@/api/client';
 import { toast } from 'sonner';
+import FacultyTimetable from './faculty/FacultyTimetable';
 
 export default function FacultyWorkloadShell() {
   const { workspaceId } = useParams();
   const { user, logOut, workspaceFilters } = useAuth();
   const navigate = useNavigate();
   
-  const [activeTab, setActiveTab] = useState<'preferences' | 'mysubjects'>('preferences');
+  const [activeTab, setActiveTab] = useState<'preferences' | 'mysubjects' | 'timetable'>('preferences');
   const [subjects, setSubjects] = useState<any[]>([]);
   const [selectedSubjects, setSelectedSubjects] = useState<any[]>([]);
   const [submissionStatus, setSubmissionStatus] = useState<any>(null);
@@ -139,12 +140,26 @@ export default function FacultyWorkloadShell() {
             <GraduationCap className={`size-5 ${activeTab === 'mysubjects' ? 'text-teal-200' : 'text-slate-400'}`} />
             My Allocated Subjects
           </button>
+          
+          <button
+            onClick={() => setActiveTab('timetable')}
+            className={`flex items-center gap-3 px-6 py-4 rounded-xl font-bold transition-all whitespace-nowrap flex-1 justify-center ${
+              activeTab === 'timetable'
+                ? 'bg-teal-600 text-white shadow-md shadow-teal-900/20' 
+                : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+            }`}
+          >
+            <BookOpen className={`size-5 ${activeTab === 'timetable' ? 'text-teal-200' : 'text-slate-400'}`} />
+            My Timetable
+          </button>
         </div>
 
         {/* Tab Content Area */}
         <div className="flex-1 bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
           {isLoading ? (
              <div className="py-20 text-center text-slate-500 font-medium">Loading workspace data...</div>
+          ) : activeTab === 'timetable' ? (
+             <FacultyTimetable workspaceId={workspaceId!} />
           ) : activeTab === 'preferences' ? (
             <div className="flex flex-col lg:flex-row gap-8">
               
@@ -253,8 +268,8 @@ export default function FacultyWorkloadShell() {
                           <p className="font-bold text-lg text-slate-900">{sub.subject_name}</p>
                           <p className="text-xs font-semibold text-slate-500">{sub.subject_code} • {sub.section}</p>
                         </div>
-                        <span className={`px-2 py-1 rounded text-xs font-bold ${sub.role === 'MAIN' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-700'}`}>
-                          {sub.role === 'MAIN' ? 'Main In-charge' : 'Assistant'}
+                        <span className={`px-2 py-1 rounded text-xs font-bold ${(sub.role === 'INCHARGE_1' || sub.role === 'Incharge-1') ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-700'}`}>
+                          {(sub.role === 'INCHARGE_1' || sub.role === 'Incharge-1') ? 'Incharge-1' : 'Incharge-2'}
                         </span>
                       </div>
                       <div className="mt-auto pt-4 border-t border-slate-100 flex gap-4">

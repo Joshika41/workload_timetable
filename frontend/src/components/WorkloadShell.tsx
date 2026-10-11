@@ -1,4 +1,4 @@
-﻿import { Link, useNavigate, type LinkProps } from '@tanstack/react-router';
+import { Link, useNavigate, type LinkProps } from '@tanstack/react-router';
 import {
   LogOut,
   Menu,
@@ -118,7 +118,7 @@ export function WorkloadShell({ role, title, subtitle, children, actions }: Prop
             </button>
             <div className="flex items-center gap-3">
               <div className="size-10 bg-white rounded-lg flex items-center justify-center p-0.5 overflow-hidden shrink-0">
-                <img src="/srm-logo.jpeg" alt="SRM University Logo" className="w-full h-full object-contain" />
+                <img src="/SRM%20LOGO.png" alt="SRM University Logo" className="w-full h-full object-contain" />
               </div>
               <div className="hidden sm:block leading-tight">
                 <p className="font-bold text-xs uppercase tracking-wide text-white">SRM University</p>

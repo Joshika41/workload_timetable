@@ -66,11 +66,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // legacy compat — no-op
   };
 
-  const realLogin = async (username: string, password: string = '123456') => {
+  const realLogin = async (username: string, password: string = '123456', requestedRole?: string) => {
     try {
       const formData = new URLSearchParams();
       formData.append('username', username);
       formData.append('password', password);
+      if (requestedRole) {
+        formData.append('scope', requestedRole);
+      }
       
       const response = await authApi.login(formData);
 

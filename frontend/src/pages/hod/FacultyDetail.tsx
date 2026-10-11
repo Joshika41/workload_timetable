@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { preferencesApi, allocationApi, academicApi } from '@/api/index';
@@ -34,16 +34,27 @@ interface AllocationRow {
   course_type: string;
   class_type: string;
   semester: number;
-  approval: 'PENDING' | 'APPROVED' | 'REJECTED';
+  preference_status: string;
+  is_allocated: boolean;
   section: string;
   valid_sections: string[];
   role: string;
   theory_hours: number;
   lab_hours: number;
   total_hours: number;
+  max_theory_hours: number;
+  max_lab_hours: number;
 }
 
-export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: number; onClose: () => void }) {
+export default function FacultyDetailModal({ 
+  facultyId, 
+  onClose,
+  onAllocationSaved
+}: { 
+  facultyId: number; 
+  onClose: () => void;
+  onAllocationSaved?: () => void;
+}) {
   const { session } = useAuth();
   const [faculty, setFaculty] = useState<FacultyInfo | null>(null);
   const [preferences, setPreferences] = useState<PreferenceItem[]>([]);
@@ -62,7 +73,9 @@ export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: 
     setIsLoading(true);
     try {
       // Load faculty info
-      const facResp = await apiClient.get(`/faculty/detail/${facultyId}`);
+      const facResp = await apiClient.get(`/faculty/detail/${facultyId}`, {
+        params: { semester_type: session?.context?.semesterType }
+      });
       setFaculty(facResp.data.faculty);
       setPreferences(facResp.data.preferences);
       setHourCap(facResp.data.hour_cap || 16);
@@ -76,13 +89,16 @@ export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: 
         course_type: p.course_type || 'CORE',
         class_type: p.class_type,
         semester: p.semester,
-        approval: (p.decision === 'APPROVED' ? 'APPROVED' : p.decision === 'DENIED' ? 'REJECTED' : 'PENDING') as AllocationRow['approval'],
+        preference_status: p.decision === 'APPROVED' ? 'APPROVED' : p.decision === 'DENIED' ? 'REJECTED' : 'PENDING',
+        is_allocated: false,
         section: '',
         valid_sections: p.sections || [],
         role: 'Incharge-1',
-        theory_hours: p.theory_hours || 0,
-        lab_hours: p.practical_hours || 0,
-        total_hours: (p.theory_hours || 0) + (p.practical_hours || 0),
+        theory_hours: 0,
+        lab_hours: 0,
+        total_hours: 0,
+        max_theory_hours: p.theory_hours || 0,
+        max_lab_hours: p.practical_hours || 0,
       }));
       
       // Merge with existing allocations if available
@@ -90,7 +106,13 @@ export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: 
         for (const existingAlloc of facResp.data.allocations) {
           const idx = initAlloc.findIndex(a => a.subject_id === existingAlloc.subject_id);
           if (idx >= 0) {
-            initAlloc[idx] = { ...initAlloc[idx], ...existingAlloc };
+            initAlloc[idx] = { 
+              ...initAlloc[idx], 
+              ...existingAlloc, 
+              is_allocated: existingAlloc.approval === 'APPROVED'
+            };
+          } else {
+            // Note: If faculty is allocated to a subject they didn't prefer, we would ideally need more info from existingAlloc to construct the row, but typically they only allocate preferred subjects in this UI currently.
           }
         }
       }
@@ -106,14 +128,18 @@ export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: 
   };
 
   const calcTotal = (allocs: AllocationRow[]) => {
-    const total = allocs.filter(a => a.approval === 'APPROVED').reduce((sum, a) => sum + a.total_hours, 0);
+    const total = allocs.filter(a => a.is_allocated).reduce((sum, a) => sum + a.total_hours, 0);
     setTotalAllocated(total);
   };
 
-  const updateAllocation = (idx: number, field: keyof AllocationRow, value: string | number) => {
+  const updateAllocation = (idx: number, field: keyof AllocationRow, value: string | number | boolean) => {
     setAllocations(prev => {
       const updated = [...prev];
       const row = { ...updated[idx] } as AllocationRow;
+      if (field === 'is_allocated' && value === true && !row.section && row.valid_sections.length > 0) {
+        row.section = row.valid_sections[0];
+      }
+      
       if (field === 'theory_hours' || field === 'lab_hours') {
         (row as any)[field] = Number(value);
         row.total_hours = (field === 'theory_hours' ? Number(value) : row.theory_hours) + 
@@ -128,17 +154,17 @@ export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: 
   };
 
   const saveAllocations = async () => {
-    const approved = allocations.filter(a => a.approval === 'APPROVED');
+    const approved = allocations.filter(a => a.is_allocated);
     const newTotal = approved.reduce((s, a) => s + a.total_hours, 0);
     if (newTotal > hourCap) {
       toast.error(`Allocation exceeds hour cap: ${newTotal} / ${hourCap} hours.`);
       return;
     }
     try {
-      await apiClient.post(`/api/faculty/${facultyId}/allocations`, {
+      await apiClient.post(`/faculty/${facultyId}/allocations`, {
         allocations: allocations.map(a => ({
           subject_id: a.subject_id,
-          approval: a.approval,
+          approval: a.is_allocated ? "APPROVED" : "PENDING",
           section: a.section,
           role: a.role,
           theory_hours: a.theory_hours,
@@ -146,8 +172,10 @@ export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: 
         })),
       });
       toast.success('Allocations saved successfully.');
-    } catch {
-      toast.error('Failed to save allocations.');
+      await loadFaculty();
+      onAllocationSaved?.();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Failed to save allocations.');
     }
   };
 
@@ -163,7 +191,7 @@ export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: 
   if (!faculty) {
     return (
       <div className="empty-state card card-body">
-        <div className="empty-state-icon">ΓÜá∩╕Å</div>
+        <div className="empty-state-icon">⚠️</div>
         <h3 className="empty-state-title">Faculty Not Found</h3>
       </div>
     );
@@ -179,7 +207,7 @@ export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: 
       zIndex: 1000, padding: '24px'
     }}>
       <div className="animate-slide-up" style={{
-        background: '#F8FAFC', borderRadius: '16px', width: '100%', maxWidth: '1000px',
+        background: '#F8FAFC', borderRadius: '16px', width: '100%', maxWidth: '1100px',
         maxHeight: '90vh', overflowY: 'auto', padding: '24px', position: 'relative',
         boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)'
       }}>
@@ -190,7 +218,7 @@ export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: 
           width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center',
           cursor: 'pointer', fontSize: '16px', color: '#64748B', zIndex: 10
         }}>
-          Γ£ò
+          ✕
         </button>
 
       {/* Faculty Info Header */}
@@ -198,7 +226,7 @@ export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
           <div>
             <h2 style={{ fontSize: '22px', fontWeight: 800, color: '#0F172A', marginBottom: '4px' }}>{faculty.name}</h2>
-            <p style={{ fontSize: '13px', color: '#64748B' }}>{faculty.designation} ┬╖ Employee ID: {faculty.erp_id}</p>
+            <p style={{ fontSize: '13px', color: '#64748B' }}>{faculty.designation} · Employee ID: {faculty.erp_id}</p>
           </div>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             <div style={{ textAlign: 'center', padding: '12px 20px', borderRadius: '12px', background: remaining >= 0 ? '#F0FDF4' : '#FEF2F2', border: `1px solid ${remaining >= 0 ? '#BBF7D0' : '#FECACA'}` }}>
@@ -216,26 +244,26 @@ export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: 
       {/* Allocation Table */}
       <div className="card" style={{ overflow: 'auto' }}>
         <div style={{ padding: '20px 20px 12px' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#0F172A', marginBottom: '4px' }}>Subject Preferences & Allocations</h3>
-          <p style={{ fontSize: '12px', color: '#64748B' }}>Review submitted preferences, approve/reject, and allocate section, role, and hours.</p>
+          <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#0F172A', marginBottom: '4px' }}>Subject Allocations</h3>
+          <p style={{ fontSize: '12px', color: '#64748B' }}>Allocate section, role, and hours to the faculty.</p>
         </div>
         
         {allocations.length === 0 ? (
           <div className="empty-state" style={{ padding: '40px' }}>
-            <div className="empty-state-icon">≡ƒô¡</div>
-            <h3 className="empty-state-title">No Preferences Submitted</h3>
-            <p className="empty-state-desc">This faculty has not yet submitted subject preferences.</p>
+            <div className="empty-state-icon">📋</div>
+            <h3 className="empty-state-title">No Subjects Available</h3>
+            <p className="empty-state-desc">This faculty has no subjects available for allocation.</p>
           </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
               <tr style={{ background: '#F8FAFC', borderBottom: '2px solid #E2E8F0' }}>
                 <th style={thStyle}>Subject</th>
-                <th style={thStyle}>Code</th>
                 <th style={thStyle}>Semester</th>
                 <th style={thStyle}>Course Type</th>
                 <th style={thStyle}>Class Type</th>
-                <th style={thStyle}>Approval</th>
+                <th style={thStyle}>Pref Status</th>
+                <th style={thStyle}>Allocate</th>
                 <th style={thStyle}>Section</th>
                 <th style={thStyle}>Role</th>
                 <th style={thStyle}>Theory Hrs</th>
@@ -245,9 +273,11 @@ export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: 
             </thead>
             <tbody>
               {allocations.map((a, idx) => (
-                <tr key={a.subject_id} style={{ borderBottom: '1px solid #F1F5F9', background: a.approval === 'REJECTED' ? '#FEF2F2' : 'white' }}>
-                  <td style={{ ...tdStyle, fontWeight: 700, color: '#0F172A', maxWidth: '200px' }}>{a.subject_name}</td>
-                  <td style={{ ...tdStyle, fontFamily: 'monospace', color: '#64748B' }}>{a.subject_code}</td>
+                <tr key={a.subject_id} style={{ borderBottom: '1px solid #F1F5F9', background: a.is_allocated ? '#F0FDF4' : 'white' }}>
+                  <td style={{ ...tdStyle, fontWeight: 700, color: '#0F172A', maxWidth: '200px' }}>
+                    {a.subject_name}
+                    <div style={{ fontSize: '11px', fontFamily: 'monospace', color: '#64748B', marginTop: '2px', fontWeight: 400 }}>{a.subject_code} · Reqd: {a.max_theory_hours}T + {a.max_lab_hours}L</div>
+                  </td>
                   <td style={tdStyle}>{a.semester}</td>
                   <td style={tdStyle}>
                     <span style={{ 
@@ -264,38 +294,50 @@ export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: 
                     </span>
                   </td>
                   <td style={tdStyle}>
-                    <select value={a.approval} onChange={e => updateAllocation(idx, 'approval', e.target.value)}
-                      style={{ ...selectStyle, color: a.approval === 'APPROVED' ? '#16A34A' : a.approval === 'REJECTED' ? '#DC2626' : '#64748B' }}>
-                      <option value="PENDING">Pending</option>
-                      <option value="APPROVED">Yes</option>
-                      <option value="REJECTED">No</option>
+                    <span style={{ 
+                      padding: '3px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700,
+                      background: a.preference_status === 'APPROVED' ? '#DCFCE7' : a.preference_status === 'REJECTED' ? '#FEE2E2' : '#F1F5F9',
+                      color: a.preference_status === 'APPROVED' ? '#166534' : a.preference_status === 'REJECTED' ? '#991B1B' : '#475569'
+                    }}>
+                      {a.preference_status}
+                    </span>
+                  </td>
+                  <td style={tdStyle}>
+                    <input type="checkbox" checked={a.is_allocated} onChange={e => updateAllocation(idx, 'is_allocated', e.target.checked)} style={{ cursor: 'pointer', width: '16px', height: '16px' }} />
+                  </td>
+                  <td style={tdStyle}>
+                    <select value={a.section} onChange={e => updateAllocation(idx, 'section', e.target.value)} style={selectStyle} disabled={!a.is_allocated}>
+                      {a.valid_sections.length === 0 ? (
+                        <option value="">No section data</option>
+                      ) : (
+                        <>
+                          <option value="">—</option>
+                          {a.valid_sections.map(sec => (
+                            <option key={sec} value={sec}>{sec}</option>
+                          ))}
+                        </>
+                      )}
                     </select>
                   </td>
                   <td style={tdStyle}>
-                    <select value={a.section} onChange={e => updateAllocation(idx, 'section', e.target.value)} style={selectStyle} disabled={a.approval !== 'APPROVED'}>
-                      <option value="">ΓÇö</option>
-                      {a.valid_sections.map(sec => (
-                        <option key={sec} value={sec}>{sec}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td style={tdStyle}>
-                    <select value={a.role} onChange={e => updateAllocation(idx, 'role', e.target.value)} style={selectStyle} disabled={a.approval !== 'APPROVED'}>
+                    <select value={a.role} onChange={e => updateAllocation(idx, 'role', e.target.value)} style={selectStyle} disabled={!a.is_allocated}>
                       <option value="Incharge-1">Incharge-1</option>
                       <option value="Incharge-2">Incharge-2</option>
                     </select>
                   </td>
                   <td style={tdStyle}>
-                    <select value={a.theory_hours} onChange={e => updateAllocation(idx, 'theory_hours', e.target.value)} style={selectStyle} disabled={a.approval !== 'APPROVED'}>
+                    <select value={a.theory_hours} onChange={e => updateAllocation(idx, 'theory_hours', e.target.value)} style={selectStyle} disabled={!a.is_allocated}>
                       {[0,1,2,3,4,5,6,7,8,9,10].map(n => <option key={n} value={n}>{n}</option>)}
                     </select>
                   </td>
                   <td style={tdStyle}>
-                    <select value={a.lab_hours} onChange={e => updateAllocation(idx, 'lab_hours', e.target.value)} style={selectStyle} disabled={a.approval !== 'APPROVED'}>
-                      {[0,1,2,3,4,5,6,7,8,9,10].map(n => <option key={n} value={n}>{n}</option>)}
+                    <select value={a.lab_hours} onChange={e => updateAllocation(idx, 'lab_hours', e.target.value)} style={{...selectStyle, opacity: a.max_lab_hours === 0 ? 0.5 : 1}} disabled={!a.is_allocated || a.max_lab_hours === 0}>
+                      {a.max_lab_hours === 0 ? <option value={0}>0</option> : [0,1,2,3,4,5,6,7,8,9,10].map(n => <option key={n} value={n}>{n}</option>)}
                     </select>
                   </td>
-                  <td style={{ ...tdStyle, fontWeight: 800, color: '#002147' }}>{a.total_hours}</td>
+                  <td style={{ ...tdStyle, fontWeight: 800, color: '#0F172A' }}>
+                    {a.total_hours}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -310,7 +352,7 @@ export default function FacultyDetailModal({ facultyId, onClose }: { facultyId: 
             padding: '12px 32px', borderRadius: '10px', border: 'none',
             background: '#002147', color: 'white', fontWeight: 700, fontSize: '14px', cursor: 'pointer'
           }}>
-          ≡ƒÆ╛ Save Allocations
+          💾 Save Allocations
         </button>
       </div>
       </div>

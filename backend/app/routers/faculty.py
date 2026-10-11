@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database.connection import get_db
 from app.models.domain import User, FacultyProfile, Department, RoleEnum
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, require_role
 
 router = APIRouter()
 
@@ -11,87 +11,161 @@ router = APIRouter()
 def get_hod_faculty_list(
     semester_type: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_role([RoleEnum.HOD.value, RoleEnum.ERP_COORDINATOR.value]))
 ):
     """Return faculty list for HOD dashboard with aggregated statuses."""
-    if current_user.role not in [RoleEnum.HOD, RoleEnum.ERP_COORDINATOR]:
-        raise HTTPException(status_code=403, detail="Not authorized")
         
     query = db.query(FacultyProfile).join(User).filter(User.department_id == current_user.department_id)
-    # Order by designation/seniority (mocked via string for now, could use a proper mapping)
-    # The prompt explicitly asks to order by seniority.
+    # Order by seniority_index, then name
+    query = query.order_by(FacultyProfile.seniority_index, FacultyProfile.name)
     profiles = query.all()
-    
-    # Sort profiles (Professor > Associate > Assistant)
-    def get_rank(desig: str):
-        d = desig.lower()
-        if "associate" in d: return 2
-        if "assistant" in d: return 3
-        if "professor" in d: return 1
-        return 4
-        
-    profiles.sort(key=lambda p: (get_rank(p.designation), p.name))
     
     result = []
     from app.models.domain import (
         PreferenceSubmission, AllocationComponent, AllocationStatusEnum,
-        PreferenceStatusEnum, AcademicWorkspace, Semester, SubjectAllocation
+        PreferenceStatusEnum, AcademicWorkspace, Semester, SubjectAllocation, PolicyConfig
     )
     
     dept = db.query(Department).filter(Department.id == current_user.department_id).first()
     inst_name = dept.institution.name if dept and dept.institution else ""
     dept_name = dept.name if dept else ""
     
-    for p in profiles:
-        sub_query = db.query(PreferenceSubmission).filter(PreferenceSubmission.faculty_id == p.id)
-        alloc_query = db.query(AllocationComponent).filter(AllocationComponent.faculty_id == p.id)
+    # Calculate expected number of semesters for this department and semester type ONCE
+    expected_semesters = 1
+    if semester_type:
+        target_st = semester_type.upper()
+        from app.models.domain import CurriculumOffering, Programme
+        # Find all distinct semesters for this department's programmes
+        progs = db.query(Programme).filter(Programme.department_id == current_user.department_id).all()
+        prog_ids = [pr.id for pr in progs]
         
-        if semester_type:
-            target_st = semester_type.upper()
-            sub_query = sub_query.join(
-                AcademicWorkspace, PreferenceSubmission.workspace_id == AcademicWorkspace.id
-            ).join(
-                Semester, AcademicWorkspace.semester_id == Semester.id
-            )
+        if prog_ids:
+            offerings = db.query(CurriculumOffering).filter(CurriculumOffering.programme_id.in_(prog_ids))
             if target_st == "ODD":
-                sub_query = sub_query.filter(Semester.semester_number.in_([1, 3, 5]))
+                offerings = offerings.filter(CurriculumOffering.semester % 2 != 0)
             elif target_st == "EVEN":
-                sub_query = sub_query.filter(Semester.semester_number.in_([2, 4, 6]))
-                
-            alloc_query = alloc_query.join(
-                SubjectAllocation, AllocationComponent.allocation_id == SubjectAllocation.id
-            ).join(
-                AcademicWorkspace, SubjectAllocation.workspace_id == AcademicWorkspace.id
-            ).join(
-                Semester, AcademicWorkspace.semester_id == Semester.id
-            )
-            if target_st == "ODD":
-                alloc_query = alloc_query.filter(Semester.semester_number.in_([1, 3, 5]))
-            elif target_st == "EVEN":
-                alloc_query = alloc_query.filter(Semester.semester_number.in_([2, 4, 6]))
-                
-        subs = sub_query.all()
-        allocs = alloc_query.all()
+                offerings = offerings.filter(CurriculumOffering.semester % 2 == 0)
+            
+            distinct_sems = set(o.semester for o in offerings.all())
+            expected_semesters = len(distinct_sems) if distinct_sems else 1
+
+    # Bulk fetch submissions and allocations for all profiles
+    profile_ids = [p.id for p in profiles]
+    
+    sub_query = db.query(PreferenceSubmission).filter(PreferenceSubmission.faculty_id.in_(profile_ids))
+    alloc_query = db.query(AllocationComponent).filter(AllocationComponent.faculty_id.in_(profile_ids))
+    
+    if semester_type:
+        target_st = semester_type.upper()
+        sub_query = sub_query.join(
+            AcademicWorkspace, PreferenceSubmission.workspace_id == AcademicWorkspace.id
+        ).join(
+            Semester, AcademicWorkspace.semester_id == Semester.id
+        )
+        if target_st == "ODD":
+            sub_query = sub_query.filter(Semester.semester_number % 2 != 0)
+        elif target_st == "EVEN":
+            sub_query = sub_query.filter(Semester.semester_number % 2 == 0)
+            
+        alloc_query = alloc_query.join(
+            SubjectAllocation, AllocationComponent.allocation_id == SubjectAllocation.id
+        ).join(
+            AcademicWorkspace, SubjectAllocation.workspace_id == AcademicWorkspace.id
+        ).join(
+            Semester, AcademicWorkspace.semester_id == Semester.id
+        )
+        if target_st == "ODD":
+            alloc_query = alloc_query.filter(Semester.semester_number % 2 != 0)
+        elif target_st == "EVEN":
+            alloc_query = alloc_query.filter(Semester.semester_number % 2 == 0)
+            
+    all_subs = sub_query.all()
+    all_allocs = alloc_query.all()
+    
+    # Group by faculty_id
+    from collections import defaultdict
+    subs_by_faculty = defaultdict(list)
+    for s in all_subs:
+        subs_by_faculty[s.faculty_id].append(s)
+        
+    allocs_by_faculty = defaultdict(list)
+    for a in all_allocs:
+        allocs_by_faculty[a.faculty_id].append(a)
+        
+    # Pre-fetch faculty programme scopes
+    from app.models.domain import FacultyProgrammeScope, CurriculumOffering, SemesterTypeEnum
+    all_scopes = db.query(FacultyProgrammeScope).filter(FacultyProgrammeScope.faculty_id.in_(profile_ids)).all()
+    scopes_by_faculty = defaultdict(list)
+    for sc in all_scopes:
+        scopes_by_faculty[sc.faculty_id].append(sc.programme_id)
+
+    # Department programmes fallback
+    dept_progs = db.query(Programme).filter(Programme.department_id == current_user.department_id).all()
+    dept_prog_ids = [pr.id for pr in dept_progs]
+
+    target_sem_type_enum = None
+    if semester_type:
+        try:
+            target_sem_type_enum = SemesterTypeEnum(semester_type.upper())
+        except ValueError:
+            pass
+
+    for p in profiles:
+        subs = subs_by_faculty.get(p.id, [])
+        allocs = allocs_by_faculty.get(p.id, [])
         
         pref_status = "Not Submitted"
+        
+        fac_prog_ids = scopes_by_faculty.get(p.id) or dept_prog_ids
+        # Find applicable (semester, programme) contexts for this faculty that require preference
+        applicable_contexts = set()
+        if target_sem_type_enum and fac_prog_ids:
+            off_query = db.query(CurriculumOffering).filter(
+                CurriculumOffering.programme_id.in_(fac_prog_ids),
+                CurriculumOffering.semester_type == target_sem_type_enum,
+                CurriculumOffering.requires_preference == True
+            ).all()
+            for o in off_query:
+                applicable_contexts.add((o.semester, o.programme_id))
+        
+        submitted_contexts = set()
+        for s in subs:
+            if s.status in [PreferenceStatusEnum.SUBMITTED, PreferenceStatusEnum.APPROVED]:
+                if s.workspace and s.workspace.semester:
+                    submitted_contexts.add((s.workspace.semester.semester_number, s.workspace.programme_id))
+                
         has_approval = any(
             s.status == PreferenceStatusEnum.APPROVED or
             any(it.decision == PreferenceStatusEnum.APPROVED for it in s.items)
             for s in subs
         )
-        has_submitted = any(
-            s.status in [PreferenceStatusEnum.SUBMITTED, PreferenceStatusEnum.APPROVED]
-            for s in subs
-        )
+        
+        if applicable_contexts:
+            has_submitted_all = applicable_contexts.issubset(submitted_contexts)
+            has_submitted_any = len(submitted_contexts.intersection(applicable_contexts)) > 0
+        else:
+            has_submitted_all = len(submitted_contexts) > 0
+            has_submitted_any = len(submitted_contexts) > 0
         
         if has_approval:
             pref_status = "Approved by HOD"
-        elif has_submitted:
+        elif has_submitted_all:
             pref_status = "Submitted"
+        elif has_submitted_any:
+            pref_status = "Partially Submitted"
             
         alloc_status = "Not Allocated"
         if allocs:
-            alloc_status = "Allocated"
+            total_alloc_hours = sum([c.theory_hours + c.practical_hours for c in allocs])
+            
+            from app.services.faculty_service import FacultyService
+            fs = FacultyService()
+            hour_cap = fs.get_faculty_target_workload(db, p)
+                
+            if total_alloc_hours >= hour_cap:
+                alloc_status = "Allocated"
+            else:
+                alloc_status = "Partially Allocated"
             
         result.append({
             "faculty_id": p.id,
@@ -173,13 +247,15 @@ def update_faculty_cycle_state(
 @router.get("/detail/{faculty_id}")
 def get_faculty_detail(
     faculty_id: int,
+    semester_type: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Return a single faculty's profile, their submitted preferences, existing allocations, and hour cap."""
     from app.models.domain import (
         PreferenceSubmission, PreferenceItem, Subject, CurriculumOffering,
-        Programme, PolicyConfig, SubjectAllocation, AllocationComponent
+        Programme, PolicyConfig, SubjectAllocation, AllocationComponent,
+        AcademicWorkspace, Semester
     )
     
     fp = db.query(FacultyProfile).filter(FacultyProfile.id == faculty_id).first()
@@ -191,23 +267,26 @@ def get_faculty_detail(
     if not fac_user or fac_user.department_id != current_user.department_id:
         raise HTTPException(status_code=403, detail="Not authorized to view this faculty")
     
-    # Get hour cap based on designation
-    hour_cap = 16  # default
-    desig = fp.designation.lower()
-    if "professor" in desig and "associate" not in desig and "assistant" not in desig:
-        cap_config = db.query(PolicyConfig).filter(PolicyConfig.key == "max_professor").first()
-        hour_cap = int(cap_config.value) if cap_config else 12
-    elif "associate" in desig:
-        cap_config = db.query(PolicyConfig).filter(PolicyConfig.key == "max_associate").first()
-        hour_cap = int(cap_config.value) if cap_config else 14
-    elif "assistant" in desig:
-        cap_config = db.query(PolicyConfig).filter(PolicyConfig.key == "max_assistant").first()
-        hour_cap = int(cap_config.value) if cap_config else 16
+    # Get hour cap based on designation / explicit target
+    from app.services.faculty_service import FacultyService
+    fac_service = FacultyService()
+    hour_cap = fac_service.get_faculty_target_workload(db, fp)
     
     # Get all submissions for this faculty
-    submissions = db.query(PreferenceSubmission).filter(
-        PreferenceSubmission.faculty_id == faculty_id
-    ).all()
+    sub_query = db.query(PreferenceSubmission).filter(PreferenceSubmission.faculty_id == faculty_id)
+    if semester_type:
+        target_st = semester_type.upper()
+        sub_query = sub_query.join(
+            AcademicWorkspace, PreferenceSubmission.workspace_id == AcademicWorkspace.id
+        ).join(
+            Semester, AcademicWorkspace.semester_id == Semester.id
+        )
+        if target_st == "ODD":
+            sub_query = sub_query.filter(Semester.semester_number % 2 != 0)
+        elif target_st == "EVEN":
+            sub_query = sub_query.filter(Semester.semester_number % 2 == 0)
+            
+    submissions = sub_query.all()
     
     prefs = []
     for sub in submissions:
@@ -260,7 +339,22 @@ def get_faculty_detail(
     
     # Get allocations
     allocations = []
-    components = db.query(AllocationComponent).filter(AllocationComponent.faculty_id == faculty_id).all()
+    comp_query = db.query(AllocationComponent).filter(AllocationComponent.faculty_id == faculty_id)
+    if semester_type:
+        target_st = semester_type.upper()
+        comp_query = comp_query.join(
+            SubjectAllocation, AllocationComponent.allocation_id == SubjectAllocation.id
+        ).join(
+            AcademicWorkspace, SubjectAllocation.workspace_id == AcademicWorkspace.id
+        ).join(
+            Semester, AcademicWorkspace.semester_id == Semester.id
+        )
+        if target_st == "ODD":
+            comp_query = comp_query.filter(Semester.semester_number % 2 != 0)
+        elif target_st == "EVEN":
+            comp_query = comp_query.filter(Semester.semester_number % 2 == 0)
+            
+    components = comp_query.all()
     for comp in components:
         sa = comp.allocation
         if not sa: continue
@@ -291,7 +385,7 @@ def save_faculty_allocations(
     faculty_id: int,
     payload: dict,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_role([RoleEnum.HOD.value, RoleEnum.ERP_COORDINATOR.value]))
 ):
     """Save HOD allocation decisions for a faculty member."""
     from app.models.domain import (
@@ -299,25 +393,14 @@ def save_faculty_allocations(
         SubjectAllocation, AllocationComponent, Section, AllocationRoleEnum, AllocationStatusEnum,
         FacultyProfile, PolicyConfig
     )
-    
-    if current_user.role not in [RoleEnum.HOD, RoleEnum.ERP_COORDINATOR]:
-        raise HTTPException(status_code=403, detail="Not authorized")
         
     fp = db.query(FacultyProfile).filter(FacultyProfile.id == faculty_id).first()
     if not fp:
         raise HTTPException(status_code=404, detail="Faculty not found")
         
-    hour_cap = 16
-    desig = fp.designation.lower()
-    if "professor" in desig and "associate" not in desig and "assistant" not in desig:
-        cap_config = db.query(PolicyConfig).filter(PolicyConfig.key == "max_professor").first()
-        hour_cap = int(cap_config.value) if cap_config else 12
-    elif "associate" in desig:
-        cap_config = db.query(PolicyConfig).filter(PolicyConfig.key == "max_associate").first()
-        hour_cap = int(cap_config.value) if cap_config else 14
-    elif "assistant" in desig:
-        cap_config = db.query(PolicyConfig).filter(PolicyConfig.key == "max_assistant").first()
-        hour_cap = int(cap_config.value) if cap_config else 16
+    from app.services.faculty_service import FacultyService
+    faculty_service = FacultyService()
+    hour_cap = faculty_service.get_faculty_target_workload(db, fp)
         
     allocations = payload.get("allocations", [])
     
@@ -339,6 +422,12 @@ def save_faculty_allocations(
             raise HTTPException(status_code=400, detail=f"Theory hours must be between 0 and 10 for subject {subject_id}.")
         if lab_hours < 0 or lab_hours > 10:
             raise HTTPException(status_code=400, detail=f"Practical hours must be between 0 and 10 for subject {subject_id}.")
+            
+        from app.models.domain import Subject
+        subject = db.query(Subject).filter(Subject.id == subject_id).first()
+        if subject and (subject.practical_hours is None or subject.practical_hours == 0) and lab_hours > 0:
+            raise HTTPException(status_code=400, detail=f"Subject {subject.course_code} is theory-only. Lab hours cannot be assigned.")
+            
         if approval == "APPROVED" and (theory_hours + lab_hours) == 0:
             raise HTTPException(status_code=400, detail=f"Total allocated hours must be greater than 0 for subject {subject_id}.")
             
@@ -348,15 +437,21 @@ def save_faculty_allocations(
             PreferenceItem.subject_id == subject_id
         ).all()
         
-        workspace_id = None
+        workspace_id = alloc.get("workspace_id")
         for item in items:
             workspace_id = item.submission.workspace_id
-            if approval == "APPROVED":
-                item.decision = PreferenceStatusEnum.APPROVED
-            elif approval == "REJECTED":
-                item.decision = PreferenceStatusEnum.DENIED
-            else:
-                item.decision = PreferenceStatusEnum.PENDING
+            
+        if not workspace_id:
+            # Fallback: look up workspace for this subject via CurriculumOffering and AcademicWorkspace
+            from app.models.domain import CurriculumOffering, AcademicWorkspace
+            offering = db.query(CurriculumOffering).filter(CurriculumOffering.subject_id == subject_id).first()
+            if offering:
+                ws = db.query(AcademicWorkspace).filter(
+                    AcademicWorkspace.programme_id == offering.programme_id,
+                    AcademicWorkspace.academic_year_id == offering.academic_year_id
+                ).first()
+                if ws:
+                    workspace_id = ws.id
         
         if approval == "APPROVED" and workspace_id:
             if not section_name:
@@ -374,25 +469,45 @@ def save_faculty_allocations(
                 db.add(section)
                 db.flush()
                 
-            # Check exclusivity: is this subject + section already allocated to someone else in this workspace?
-            existing_allocation = db.query(SubjectAllocation).join(AllocationComponent).filter(
+            # Check exclusivity: is this (workspace_id, section_id, subject_id) already allocated to someone else?
+            existing_sa = db.query(SubjectAllocation).filter(
                 SubjectAllocation.workspace_id == workspace_id,
                 SubjectAllocation.subject_id == subject_id,
                 SubjectAllocation.section_id == section.id,
-                AllocationComponent.faculty_id != faculty_id
             ).first()
             
-            if existing_allocation:
-                db.rollback()
-                raise HTTPException(status_code=400, detail=f"Subject {subject_id} in section {section_name} is already allocated to another faculty member.")
-                
-            # Upsert allocation
-            sa = db.query(SubjectAllocation).join(AllocationComponent).filter(
+            if existing_sa:
+                for comp in existing_sa.components:
+                    if comp.faculty_id != faculty_id:
+                        other_fac_name = comp.faculty.name if comp.faculty else f"Faculty #{comp.faculty_id}"
+                        subj_code = subject.course_code if subject else f"ID {subject_id}"
+                        db.rollback()
+                        raise HTTPException(
+                            status_code=400, 
+                            detail=f"Subject {subj_code} in Section {section_name} is already allocated to {other_fac_name}."
+                        )
+
+            # Check if this faculty was previously allocated to this subject in a DIFFERENT section or allocation in this workspace
+            prev_allocations = db.query(SubjectAllocation).join(AllocationComponent).filter(
                 AllocationComponent.faculty_id == faculty_id,
                 SubjectAllocation.subject_id == subject_id,
                 SubjectAllocation.workspace_id == workspace_id
+            ).all()
+
+            for prev_sa in prev_allocations:
+                if not existing_sa or prev_sa.id != existing_sa.id:
+                    # Clean up the previous section's allocation for this faculty
+                    db.query(AllocationComponent).filter(AllocationComponent.allocation_id == prev_sa.id).delete()
+                    db.delete(prev_sa)
+                    db.flush()
+
+            # Upsert canonical SubjectAllocation for (workspace_id, section.id, subject_id)
+            sa = db.query(SubjectAllocation).filter(
+                SubjectAllocation.workspace_id == workspace_id,
+                SubjectAllocation.subject_id == subject_id,
+                SubjectAllocation.section_id == section.id
             ).first()
-            
+
             if not sa:
                 sa = SubjectAllocation(
                     workspace_id=workspace_id,
@@ -403,11 +518,12 @@ def save_faculty_allocations(
                 db.add(sa)
                 db.flush()
             else:
-                sa.section_id = section.id
-                
-            # Upsert component
+                sa.status = AllocationStatusEnum.ALLOCATED
+
+            # Delete any existing components on this SubjectAllocation before inserting the fresh one
             db.query(AllocationComponent).filter(AllocationComponent.allocation_id == sa.id).delete()
-            
+            db.flush()
+
             role_enum = AllocationRoleEnum.INCHARGE_1 if role_str == "Incharge-1" else AllocationRoleEnum.INCHARGE_2
             comp = AllocationComponent(
                 allocation_id=sa.id,
@@ -417,30 +533,19 @@ def save_faculty_allocations(
                 practical_hours=lab_hours
             )
             db.add(comp)
+            db.flush()
         
         elif approval in ["REJECTED", "PENDING"] and workspace_id:
-            # Delete allocation if it exists
-            sa = db.query(SubjectAllocation).join(AllocationComponent).filter(
+            # Delete allocation if it exists for this faculty and subject
+            sas = db.query(SubjectAllocation).join(AllocationComponent).filter(
                 AllocationComponent.faculty_id == faculty_id,
                 SubjectAllocation.subject_id == subject_id,
                 SubjectAllocation.workspace_id == workspace_id
-            ).first()
-            if sa:
+            ).all()
+            for sa in sas:
                 db.query(AllocationComponent).filter(AllocationComponent.allocation_id == sa.id).delete()
                 db.delete(sa)
-    
-    # Keep parent submission status synchronized with decisions
-    faculty_subs = db.query(PreferenceSubmission).filter(PreferenceSubmission.faculty_id == faculty_id).all()
-    for s in faculty_subs:
-        if s.items:
-            decisions = [it.decision for it in s.items]
-            if any(d == PreferenceStatusEnum.APPROVED for d in decisions):
-                s.status = PreferenceStatusEnum.APPROVED
-                s.review_status = PreferenceStatusEnum.APPROVED
-            elif all(d == PreferenceStatusEnum.DENIED for d in decisions):
-                s.review_status = PreferenceStatusEnum.DENIED
-            elif any(d == PreferenceStatusEnum.PENDING for d in decisions):
-                s.review_status = PreferenceStatusEnum.PENDING
+            db.flush()
     
     db.commit()
     return {"message": "Allocations saved successfully"}

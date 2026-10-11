@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, status as http_status
+from fastapi import APIRouter, Depends, HTTPException, status as http_status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database.connection import get_db
@@ -10,6 +10,7 @@ from app.models.domain import (
 from app.auth.dependencies import require_role, get_current_user
 from app.auth.workspace_auth import verify_workspace_access
 from app.core.workspace import WorkspaceContext, decode_workspace_id
+from app.schemas.allocation import SubjectAllocationRequest
 
 router = APIRouter()
 
@@ -55,9 +56,7 @@ def get_allocations(
 @router.post("")
 def create_or_update_allocation(
     workspace_id: str,
-    section_id: int,
-    subject_id: int,
-    components: List[dict],
+    req: SubjectAllocationRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role([RoleEnum.HOD.value, RoleEnum.ERP_COORDINATOR.value]))
 ):
@@ -75,65 +74,10 @@ def create_or_update_allocation(
     if workspace and workspace.workflow_state == WorkspaceWorkflowStateEnum.FINALIZED:
         raise HTTPException(status_code=http_status.HTTP_423_LOCKED, detail="Workspace is finalized")
 
-    # Validate section belongs to workspace
-    section = db.query(Section).filter(Section.id == section_id, Section.workspace_id == workspace_id).first()
-    if not section:
-        raise HTTPException(status_code=404, detail="Section not found in this workspace")
-
-    # Validate subject
-    subject = db.query(Subject).filter(Subject.id == subject_id).first()
-    if not subject:
-        raise HTTPException(status_code=404, detail="Subject not found")
-
-    # Find or create allocation
-    allocation = db.query(SubjectAllocation).filter(
-        SubjectAllocation.workspace_id == workspace_id,
-        SubjectAllocation.section_id == section_id,
-        SubjectAllocation.subject_id == subject_id,
-    ).first()
-
-    if not allocation:
-        allocation = SubjectAllocation(
-            workspace_id=workspace_id,
-            section_id=section_id,
-            subject_id=subject_id,
-            status=AllocationStatusEnum.UNALLOCATED,
-        )
-        db.add(allocation)
-        db.flush()
-    else:
-        # Clear existing components
-        db.query(AllocationComponent).filter(AllocationComponent.allocation_id == allocation.id).delete()
-        db.flush()
-
-    # Add components
-    total_theory = 0
-    total_practical = 0
-    for c in components:
-        try:
-            role_enum = AllocationRoleEnum(c["role"])
-        except (ValueError, KeyError):
-            raise HTTPException(status_code=400, detail=f"Invalid role: {c.get('role')}")
-
-        comp = AllocationComponent(
-            allocation_id=allocation.id,
-            faculty_id=c["faculty_id"],
-            role=role_enum,
-            theory_hours=c.get("theory_hours", 0),
-            practical_hours=c.get("practical_hours", 0),
-        )
-        db.add(comp)
-        total_theory += c.get("theory_hours", 0)
-        total_practical += c.get("practical_hours", 0)
-
-    # Update status
-    if total_theory >= subject.theory_hours and total_practical >= subject.practical_hours:
-        allocation.status = AllocationStatusEnum.ALLOCATED
-    elif total_theory > 0 or total_practical > 0:
-        allocation.status = AllocationStatusEnum.PARTIALLY_ALLOCATED
-
-    db.commit()
-    db.refresh(allocation)
+    from app.services.allocation_service import AllocationService
+    alloc_service = AllocationService()
+    
+    allocation = alloc_service.create_or_update_allocation(db, req, current_user, workspace_id)
     return _serialize_allocation(allocation)
 
 @router.patch("/{allocation_id}")

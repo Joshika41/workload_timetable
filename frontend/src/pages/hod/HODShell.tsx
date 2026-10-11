@@ -1,29 +1,65 @@
-import { useEffect } from 'react';
-import { Routes, Route, Navigate, useNavigate, NavLink } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Routes, Route, Navigate, useNavigate, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import HODHome from './HODHome';
 import SemesterWorkspace from './SemesterWorkspace';
 import WorkloadViewer from './WorkloadViewer';
+import ClassMatrixViewer from './ClassMatrixViewer';
 import HODSettings from './HODSettings';
 import FacultyDetail from './FacultyDetail';
 
-const NAV_ITEMS = [
+const STATIC_NAV_ITEMS = [
   { to: '/hod', label: 'Faculty List', icon: '👥', exact: true },
   { to: '/hod/viewer', label: 'Workload Viewer', icon: '👁️', exact: false },
+  { to: '/hod/classmatrix', label: 'Class-wise Matrix', icon: '📋', exact: false },
   { to: '/hod/settings', label: 'Settings', icon: '⚙️', exact: false },
 ];
 
 export default function HODShell() {
-  const { session, logOut, updateContext } = useAuth();
+  const { session, logOut } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  
+  const [inferredWorkspaceId, setInferredWorkspaceId] = useState<string | null>(null);
+  const [isInferringWorkspace, setIsInferringWorkspace] = useState(true);
 
   useEffect(() => {
     if (!session) navigate('/', { replace: true });
     else if (session.role !== 'HOD' && session.role !== 'ERP_COORDINATOR') navigate('/', { replace: true });
   }, [session, navigate]);
 
+  useEffect(() => {
+    if (session?.context?.semesterType) {
+      import('@/api/index').then(({ academicApi }) => {
+        academicApi.getWorkspacesByContext(0, session.context.semesterType)
+          .then(res => {
+            if (res && res.length > 0) {
+              setInferredWorkspaceId(res[0].workspace_id);
+            }
+          })
+          .catch(() => {})
+          .finally(() => setIsInferringWorkspace(false));
+      });
+    } else {
+        setIsInferringWorkspace(false);
+    }
+  }, [session?.context?.semesterType]);
+
   if (!session) return null;
   const { context } = session;
+
+  const match = location.pathname.match(/\/hod\/workspace\/([^\/]+)/);
+  const activeWorkspaceId = match ? match[1] : inferredWorkspaceId;
+
+  const dynamicNavItems = [
+    ...STATIC_NAV_ITEMS,
+    {
+      to: activeWorkspaceId ? `/hod/workspace/${activeWorkspaceId}/timetable` : '/hod/no-workspace',
+      label: 'Timetable',
+      icon: '📅',
+      exact: false
+    }
+  ];
 
   return (
     <div className="erp-layout">
@@ -32,7 +68,7 @@ export default function HODShell() {
         {/* Brand */}
         <div className="sidebar-brand">
           <div className="sidebar-logo">
-            <img src="/srm-logo.jpeg" alt="SRM" onError={e => { (e.target as HTMLImageElement).style.display='none'; }} />
+            <img src="/SRM%20LOGO.png" alt="SRM" />
           </div>
           <div className="sidebar-brand-text">
             <div className="sidebar-brand-title">SRM Workload</div>
@@ -64,7 +100,7 @@ export default function HODShell() {
         {/* Nav */}
         <nav className="sidebar-nav">
           <div className="sidebar-section-label">Navigation</div>
-          {NAV_ITEMS.map(item => (
+          {dynamicNavItems.map(item => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -104,7 +140,6 @@ export default function HODShell() {
             <span className="context-chip">📋 {context.departmentName}</span>
             <span className="context-chip">👤 {context.designation}</span>
             <span className="context-chip">AY {context.academicYear}</span>
-
           </div>
           <div className="context-banner-actions">
             <button className="btn-context-change" onClick={logOut}>Sign Out</button>
@@ -117,8 +152,26 @@ export default function HODShell() {
             <Route path="/" element={<HODHome />} />
             <Route path="/faculty/:facultyId" element={<FacultyDetail />} />
             <Route path="/viewer" element={<WorkloadViewer />} />
+            <Route path="/classmatrix" element={<ClassMatrixViewer />} />
             <Route path="/settings" element={<HODSettings />} />
             <Route path="/workspace/:workspaceId/*" element={<SemesterWorkspace />} />
+            <Route path="/no-workspace" element={
+              isInferringWorkspace ? (
+                <div className="empty-state card card-body" style={{ margin: '20px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '40px', marginBottom: '12px' }}>⏳</div>
+                  <h3 className="empty-state-title">Loading Workspace...</h3>
+                  <p className="empty-state-desc">Locating your department's active timetable.</p>
+                </div>
+              ) : inferredWorkspaceId ? (
+                <Navigate to={`/hod/workspace/${inferredWorkspaceId}/timetable`} replace />
+              ) : (
+                <div className="empty-state card card-body" style={{ margin: '20px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '40px', marginBottom: '12px' }}>📅</div>
+                  <h3 className="empty-state-title">No Active Workspace</h3>
+                  <p className="empty-state-desc">Please select a workspace from the dashboard or class matrix to view its timetable.</p>
+                </div>
+              )
+            } />
             <Route path="*" element={<Navigate to="/hod" replace />} />
           </Routes>
         </div>

@@ -29,10 +29,11 @@ def upgrade() -> None:
     )
     op.create_table('institutions',
     sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('code', sa.String(), nullable=False, unique=True, default=""),
     sa.Column('name', sa.String(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=True),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('name')
+    sa.UniqueConstraint('code')
     )
     op.create_table('policy_config',
     sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
@@ -141,6 +142,9 @@ def upgrade() -> None:
     sa.Column('faculty_type', sa.String(), nullable=True),
     sa.Column('is_placeholder', sa.Boolean(), nullable=True),
     sa.Column('is_dummy', sa.Boolean(), nullable=True),
+    sa.Column('target_workload', sa.Integer(), nullable=True),
+    sa.Column('seniority_index', sa.Integer(), nullable=False, server_default='0'),
+    sa.Column('campus_work_hours', sa.Integer(), nullable=False, server_default='0'),
     sa.ForeignKeyConstraint(['home_department_id'], ['departments.id'], ),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
     sa.PrimaryKeyConstraint('id'),
@@ -175,6 +179,8 @@ def upgrade() -> None:
     sa.Column('workspace_id', sa.String(), nullable=False),
     sa.Column('curriculum_offering_id', sa.Integer(), nullable=True),
     sa.Column('name', sa.String(), nullable=False),
+    sa.Column('student_strength', sa.Integer(), nullable=False, server_default='0'),
+    sa.Column('is_active', sa.Boolean(), nullable=False, server_default='1'),
     sa.ForeignKeyConstraint(['curriculum_offering_id'], ['curriculum_offerings.id'], ),
     sa.ForeignKeyConstraint(['workspace_id'], ['academic_workspaces.id'], ),
     sa.PrimaryKeyConstraint('id')

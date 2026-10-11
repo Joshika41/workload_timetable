@@ -7,8 +7,8 @@ from dotenv import load_dotenv
 backend_dir = Path(__file__).resolve().parent.parent.parent
 root_dir = backend_dir.parent
 
-load_dotenv(backend_dir / ".env")
-load_dotenv(root_dir / ".env")
+load_dotenv(backend_dir / ".env", override=True)
+load_dotenv(root_dir / ".env", override=True)
 
 # Determine the DATABASE_URL. Use SQLite as a local fallback when Docker/Postgres are unavailable.
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./erp_local.db")

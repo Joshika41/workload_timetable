@@ -53,7 +53,7 @@ export default function AdminDashboard() {
       <header className="bg-[#002147] text-white px-8 py-4 flex items-center justify-between sticky top-0 z-50 shadow-md">
         <div className="flex items-center gap-4">
           <div className="size-10 bg-white rounded flex items-center justify-center">
-            <img src="/srm-logo.jpeg" alt="SRM Logo" className="size-8 object-contain" />
+            <img src="/SRM%20LOGO.png" alt="SRM Logo" className="size-8 object-contain" />
           </div>
           <div>
             <h1 className="font-bold text-lg leading-tight tracking-tight">HOD Portal</h1>

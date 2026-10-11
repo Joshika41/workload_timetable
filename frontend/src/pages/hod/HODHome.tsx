@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
-import { facultyApi } from '@/api/index';
+import { facultyApi, workloadApi } from '@/api/index';
 import { apiClient } from '@/api/client';
 import { toast } from 'sonner';
 import FacultyDetailModal from './FacultyDetail';
+import ProgressSphere from '@/components/ProgressSphere';
 
 interface FacultyRow {
   faculty_id: number;
@@ -35,13 +36,38 @@ export default function HODHome() {
   const [isFinalizing, setIsFinalizing] = useState(false);
   const [isReopening, setIsReopening] = useState(false);
   const [selectedFacultyId, setSelectedFacultyId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const [stats, setStats] = useState<any>(null);
+
+  const fetchDashboardData = async () => {
+    setError(null);
+    try {
+      const [facResult, statsResult] = await Promise.allSettled([
+        facultyApi.getHODFacultyList(session?.context?.semesterType),
+        workloadApi.getDashboardStats(session?.context?.semesterType)
+      ]);
+      
+      if (facResult.status === 'fulfilled') {
+        setFaculty(facResult.value);
+      } else {
+        toast.error('Failed to load faculty list');
+        setError('Failed to load faculty list. Please try again.');
+      }
+      
+      if (statsResult.status === 'fulfilled') {
+        setStats(statsResult.value);
+      } else {
+        console.error("Dashboard stats failed:", statsResult.reason);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
     setIsLoading(true);
-    facultyApi.getHODFacultyList(session?.context?.semesterType)
-      .then(setFaculty)
-      .catch(() => toast.error('Failed to load faculty list'))
-      .finally(() => setIsLoading(false));
+    fetchDashboardData();
   }, [session?.context?.semesterType]);
 
   const handleFinalize = async () => {
@@ -49,10 +75,14 @@ export default function HODHome() {
     setIsFinalizing(true);
     try {
       const res = await apiClient.post('/workload/finalize/department');
-      toast.success(res.data.message || 'Workload finalized.');
-      // Refresh faculty list
-      const data = await facultyApi.getHODFacultyList(session?.context?.semesterType);
-      setFaculty(data);
+      toast.success(res.data?.message || 'Workload finalized.');
+      // Refresh faculty list and stats
+      const [facData, statsData] = await Promise.all([
+        facultyApi.getHODFacultyList(session?.context?.semesterType),
+        workloadApi.getDashboardStats(session?.context?.semesterType)
+      ]);
+      setFaculty(facData);
+      setStats(statsData);
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Failed to finalize workload.');
     } finally {
@@ -65,10 +95,14 @@ export default function HODHome() {
     setIsReopening(true);
     try {
       const res = await apiClient.post('/workload/reopen/department');
-      toast.success(res.data.message || 'Workload reopened.');
-      // Refresh faculty list
-      const data = await facultyApi.getHODFacultyList(ctx?.semesterType);
-      setFaculty(data);
+      toast.success(res.data?.message || 'Workload reopened.');
+      // Refresh faculty list and stats
+      const [facData, statsData] = await Promise.all([
+        facultyApi.getHODFacultyList(ctx?.semesterType),
+        workloadApi.getDashboardStats(session?.context?.semesterType)
+      ]);
+      setFaculty(facData);
+      setStats(statsData);
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Failed to reopen workload.');
     } finally {
@@ -87,7 +121,7 @@ export default function HODHome() {
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (err: any) {
-      toast.error('Failed to export PDF.');
+      toast.error(err.response?.data?.detail || 'Failed to export PDF. Ensure workload is finalized.');
     }
   };
 
@@ -104,8 +138,9 @@ export default function HODHome() {
         <h1 className="welcome-title" style={{ marginBottom: '6px' }}>
           Welcome, {session.name}!
         </h1>
-        <p className="welcome-subtitle">
-          {ctx.departmentName} · {ctx.institutionName} · AY {ctx.academicYear}
+        <p className="welcome-subtitle" style={{ lineHeight: '1.5' }}>
+          {ctx.departmentName} · {ctx.institutionName} · AY {ctx.academicYear}<br/>
+          {stats?.programmes?.length ? `Programmes: ${stats.programmes.join(', ')}` : ''}
         </p>
         <div className="welcome-meta">
           <span className="welcome-chip">🏛️ {ctx.institutionName}</span>
@@ -113,6 +148,46 @@ export default function HODHome() {
           <span className="welcome-chip">👤 {ctx.designation}</span>
         </div>
       </div>
+
+      {/* Dashboard Stats */}
+      {stats && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px', marginBottom: '24px' }}>
+          <div className="card" style={{ padding: '20px' }}>
+            <div style={{ fontSize: '13px', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>Total Faculty</div>
+            <div style={{ fontSize: '28px', fontWeight: 800, color: '#0F172A', marginTop: '8px' }}>{stats.faculty_count}</div>
+          </div>
+          <div className="card" style={{ padding: '20px' }}>
+            <div style={{ fontSize: '13px', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>Allocation Progress</div>
+            <div style={{ fontSize: '28px', fontWeight: 800, color: '#16A34A', marginTop: '8px' }}>{stats.allocation_progress}</div>
+            <div style={{ fontSize: '12px', color: '#64748B', marginTop: '4px' }}>{stats.faculty_with_teaching} allocated / {stats.faculty_no_teaching} unallocated</div>
+          </div>
+          <div className="card" style={{ padding: '20px' }}>
+            <div style={{ fontSize: '13px', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>Submitted ({ctx.semesterType})</div>
+            <div style={{ marginTop: '12px' }}>
+              <div style={{ fontSize: '28px', fontWeight: 800, color: '#0F172A' }}>
+                {stats[`${ctx.semesterType.toLowerCase()}_stats`]?.submitted} <span style={{fontSize: '16px', color: '#64748B'}}>/ {stats.faculty_count}</span>
+              </div>
+            </div>
+          </div>
+          <div className="card" style={{ padding: '20px' }}>
+            <div style={{ fontSize: '13px', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>Not Submitted ({ctx.semesterType})</div>
+            <div style={{ marginTop: '12px' }}>
+              <div style={{ fontSize: '28px', fontWeight: 800, color: '#0F172A' }}>
+                {stats[`${ctx.semesterType.toLowerCase()}_stats`]?.not_submitted} <span style={{fontSize: '16px', color: '#64748B'}}>/ {stats.faculty_count}</span>
+              </div>
+            </div>
+          </div>
+          <div className="card" style={{ padding: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ fontSize: '13px', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>Completion</div>
+              <div style={{ fontSize: '12px', color: '#64748B', marginTop: '4px' }}>
+                {stats.faculty_with_teaching} out of {stats.faculty_count} allocated
+              </div>
+            </div>
+            <ProgressSphere percent={stats.faculty_count > 0 ? Math.round((stats.faculty_with_teaching / stats.faculty_count) * 100) : 0} size={64} strokeWidth={6} />
+          </div>
+        </div>
+      )}
 
       {/* Semester Tabs */}
       <div style={{ display: 'flex', gap: '16px', marginBottom: '24px' }}>
@@ -129,7 +204,6 @@ export default function HODHome() {
         >
           <div style={{ fontSize: '32px' }}>📅</div>
           <div style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '-0.02em' }}>ODD Semester</div>
-          <div style={{ fontSize: '13px', opacity: 0.8, fontWeight: 500 }}>Semesters 1, 3, 5</div>
         </button>
         <button
           onClick={() => updateContext({ semesterType: 'EVEN' })}
@@ -144,7 +218,6 @@ export default function HODHome() {
         >
           <div style={{ fontSize: '32px' }}>📆</div>
           <div style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '-0.02em' }}>EVEN Semester</div>
-          <div style={{ fontSize: '13px', opacity: 0.8, fontWeight: 500 }}>Semesters 2, 4, 6</div>
         </button>
       </div>
 
@@ -188,7 +261,11 @@ export default function HODHome() {
           <p className="page-subtitle">Review faculty preferences and manage workload allocations. Faculty are ordered by seniority.</p>
         </div>
         <span style={{ fontSize: '13px', color: '#64748B', fontWeight: 600 }}>
-          {faculty.length} faculty member{faculty.length !== 1 ? 's' : ''}
+          {isLoading ? (
+            <div className="skeleton" style={{ width: '120px', height: '20px', display: 'inline-block', borderRadius: '4px' }} />
+          ) : (
+            `${faculty.length} faculty member${faculty.length !== 1 ? 's' : ''}`
+          )}
         </span>
       </div>
 
@@ -198,6 +275,12 @@ export default function HODHome() {
           {[1, 2, 3, 4, 5].map(i => (
             <div key={i} className="skeleton" style={{ height: 56, borderRadius: '10px' }} />
           ))}
+        </div>
+      ) : error ? (
+        <div className="empty-state card card-body" style={{ borderColor: '#FECACA', background: '#FEF2F2' }}>
+          <div className="empty-state-icon">⚠️</div>
+          <h3 className="empty-state-title" style={{ color: '#DC2626' }}>Error Loading Data</h3>
+          <p className="empty-state-desc" style={{ color: '#991B1B' }}>{error}</p>
         </div>
       ) : faculty.length === 0 ? (
         <div className="empty-state card card-body">
@@ -263,11 +346,8 @@ export default function HODHome() {
       {selectedFacultyId && (
         <FacultyDetailModal 
           facultyId={selectedFacultyId} 
-          onClose={() => {
-            setSelectedFacultyId(null);
-            // Refresh the faculty list when modal closes to reflect any allocation changes
-            facultyApi.getHODFacultyList(ctx?.semesterType).then(setFaculty);
-          }} 
+          onClose={() => setSelectedFacultyId(null)}
+          onAllocationSaved={fetchDashboardData}
         />
       )}
     </div>

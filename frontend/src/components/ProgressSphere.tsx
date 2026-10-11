@@ -14,14 +14,14 @@ export default function ProgressSphere({ percent, size = 90, strokeWidth = 7 }: 
   const gap = circumference - dash;
 
   // Color based on progress
-  const color = clamped === 100 ? '#10B981' : clamped >= 75 ? '#3B82F6' : clamped >= 40 ? '#F59E0B' : '#E2E8F0';
-  const textColor = clamped === 100 ? '#065F46' : clamped >= 75 ? '#1D4ED8' : clamped >= 40 ? '#92400E' : '#94A3B8';
+  const color = clamped === 100 ? '#10B981' : clamped >= 75 ? '#3B82F6' : clamped > 0 ? '#6366F1' : '#CBD5E1';
+  const textColor = clamped === 100 ? '#059669' : clamped >= 75 ? '#1D4ED8' : clamped > 0 ? '#4338CA' : '#64748B';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
       <svg width={size} height={size} className="sphere-svg">
         {/* Background circle */}
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#F1F5F9" strokeWidth={strokeWidth} />
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#E2E8F0" strokeWidth={strokeWidth} />
         {/* Progress arc */}
         {clamped > 0 && (
           <circle

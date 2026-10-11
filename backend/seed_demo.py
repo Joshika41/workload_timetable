@@ -25,7 +25,7 @@ def seed():
         inst_names = ["E&T", "Flabs", "Management", "B-Arch"]
         institutions = {}
         for name in inst_names:
-            inst = Institution(name=name)
+            inst = Institution(name=name, code=name[:5].upper())
             db.add(inst)
             db.commit()
             institutions[name] = inst

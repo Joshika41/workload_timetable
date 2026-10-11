@@ -1,0 +1,735 @@
+Absolutely, Josh. I’ll convert your raw specifications into a formal, human-readable ERP requirements document while preserving the actual meaning, workflow, rules, and examples you provided. I’ll also remove repetition and make the logic clear enough that a developer, mentor, HOD, or evaluator can understand how the system is supposed to work.
+
+SRM UNIVERSITY
+
+WORKLOAD AND TIMETABLE MANAGEMENT ERP
+
+Functional Requirements and Workflow Specification
+
+1. Login and User Profile Selection
+
+The login page shall provide a simple and common login structure for both HOD and Faculty users. The login process must not contain an academic context selector at the initial stage.
+
+1.1 Login Profile Selection
+
+The first step of the login process shall allow the user to select their login profile from two options:
+
+1. HOD
+
+
+2. Faculty
+
+
+
+The user must first select whether they are entering the system as an HOD or as a Faculty member.
+
+1.2 Institution Selection
+
+After selecting the login profile, the user shall select their institution from a dropdown list.
+
+The dropdown must contain the four institutions available in the ERP:
+
+1. E&T
+
+
+2. Flabs
+
+
+3. Management
+
+
+4. B-Arch
+
+
+
+1.3 User Profile Selection
+
+After selecting the institution, the user shall select their individual profile from the profile dropdown.
+
+The profile dropdown must display the relevant users based on the previously selected login role and institution.
+
+Each profile entry should clearly provide:
+
+Faculty/HOD Name
+
+Employee ID
+
+Institution
+
+Department
+
+Relevant designation/seniority information
+
+
+The profiles should be arranged according to seniority.
+
+1.4 Role-Based Profile Filtering
+
+The profile dropdown must dynamically apply role-based filtering.
+
+For example:
+
+If the user selects HOD, only HOD profiles belonging to the selected institution shall be displayed.
+
+If the user selects Faculty, only Faculty profiles belonging to the selected institution shall be displayed.
+
+
+The system must therefore prevent unrelated profiles from appearing in the selection list.
+
+1.5 Password and Sign-In
+
+For the current ERP implementation/demo, the password shall be automatically populated with:
+
+123456
+
+The sign-in button must dynamically display the selected role.
+
+Examples:
+
+SIGN IN AS HOD
+
+SIGN IN AS FACULTY
+
+
+This login structure and filtering logic shall be common across the entire ERP.
+
+
+---
+
+2. HOD Portal
+
+After an HOD successfully logs into the system, the HOD shall be taken to the dashboard/home page corresponding to their department.
+
+The HOD must be able to view and manage the faculty members belonging to their department.
+
+2.1 Department Faculty Listing
+
+The HOD home page shall display the complete faculty list of the HOD's department.
+
+The faculty list must:
+
+Display faculty members neatly.
+
+Be arranged according to seniority.
+
+Show relevant faculty information.
+
+Provide a View Details action for every faculty member.
+
+
+The HOD must only be able to access faculty information belonging to the appropriate department and academic context.
+
+
+---
+
+3. Faculty Details and Subject Allocation
+
+When the HOD selects View Details for a faculty member, the system shall open a clear and structured allocation screen.
+
+The allocation information shall be displayed in tabular form.
+
+3.1 Allocation Table
+
+The table shall contain the following columns:
+
+ColumnInformation
+
+1Subject Preference and Class Type
+2Approval
+3Section
+4Role
+5Theory Hours
+6Lab Hours
+7Total Hours
+
+
+3.2 Subject and Class Type
+
+The first column shall display the subjects selected/preferred by the faculty member.
+
+Each subject must also display its corresponding class type.
+
+This is particularly important where different programmes or class types exist within the same department.
+
+For example:
+
+MCA General
+
+MCA GEN AI
+
+
+The HOD must be able to clearly understand which class type the subject belongs to.
+
+3.3 Approval
+
+The HOD shall be able to approve or reject a faculty member's subject preference.
+
+The approval field shall be presented as a dropdown containing:
+
+Yes
+
+No
+
+
+The approval decision must be associated with the specific subject preference.
+
+3.4 Section Allocation
+
+The HOD shall select the section to which the faculty member will be allocated.
+
+The section shall be selected through a dropdown.
+
+For example:
+
+Section A
+
+Section B
+
+Section C
+
+
+The available sections must be generated from the actual academic context rather than being permanently hardcoded.
+
+3.5 Faculty Role Allocation
+
+The HOD shall assign the faculty member a role for the respective subject.
+
+The available roles shall be:
+
+1. Incharge-1
+
+
+2. Incharge-2
+
+
+
+The role must be selected independently for each applicable subject allocation.
+
+3.6 Theory and Lab Hours
+
+The HOD shall manually allocate teaching hours.
+
+Two separate hour fields shall be provided:
+
+Theory Hours
+
+Lab Hours
+
+
+Both shall use dropdown selections ranging from:
+
+1 to 10 hours
+
+The HOD must select the appropriate number of hours for each type.
+
+3.7 Total Hours
+
+The system shall automatically calculate the total allocated hours.
+
+The total must be derived from the allocated theory and lab hours rather than being entered manually.
+
+For example:
+
+Theory Hours + Lab Hours = Total Allocated Hours
+
+The calculated total shall be displayed clearly in the allocation table.
+
+
+---
+
+4. HOD Allocation Constraints and Business Rules
+
+The following rules must be enforced throughout the HOD allocation process.
+
+4.1 Seniority-Based Faculty Listing
+
+Faculty members displayed within the HOD portal must be arranged according to their seniority.
+
+This ordering must be generated dynamically from the faculty information stored in the system.
+
+4.2 Subject Allocation Conflict
+
+Multiple faculty members may initially select/prefer the same subject.
+
+For example:
+
+Faculty A → Subject X
+
+Faculty B → Subject X
+
+
+Both preferences may exist initially.
+
+However, once the HOD officially allocates and finalizes that subject to a faculty member in the applicable academic context, the same subject must no longer be available for allocation to another faculty member where the allocation would create a conflict.
+
+The previously selected subject should therefore become appropriately disabled for the other faculty member.
+
+This restriction must be applied based on the actual academic context and must not incorrectly disable the subject globally across unrelated departments, programmes, semesters, or class types.
+
+4.3 Faculty Workload Hour Cap
+
+Each faculty member shall have a maximum workload/hour cap based on their designation.
+
+The system must ensure:
+
+Allocated Hours ≤ Faculty Designation Hour Cap
+
+The allocated workload may be lower than the faculty member's maximum allowed workload.
+
+However, the system must never allow the allocation to exceed the applicable hour cap.
+
+The hour cap must therefore be dynamically associated with the faculty member's designation rather than using one universal limit for everyone.
+
+
+---
+
+5. Workload Finalization
+
+Once the HOD has completed the required allocations for the faculty members in the relevant academic context, the system shall allow the workload to be finalized.
+
+The Finalize Workload button shall only become available when the required allocation conditions have been satisfied.
+
+After successful finalization:
+
+The allocation becomes the official workload data.
+
+The finalized workload becomes available to the relevant workload views.
+
+Invalid or conflicting allocations must not be finalized.
+
+The system must preserve the integrity of the finalized data.
+
+
+5.1 PDF Export
+
+Once the workload has been successfully finalized, the Export Workload as PDF option shall become available.
+
+The generated PDF must contain the actual finalized workload data from the system.
+
+The PDF must not contain hardcoded or manually fabricated faculty, subject, section, or hour information.
+
+
+---
+
+6. Global ERP Applicability
+
+The above HOD workflow and business rules shall not be limited to a single department, institution, or semester.
+
+The same system logic must operate globally throughout the ERP.
+
+The rules shall apply across:
+
+All four institutions
+
+All departments
+
+All programmes
+
+All academic years
+
+All semesters
+
+All sections
+
+All faculty members
+
+All HOD accounts
+
+
+For example, a rule implemented for faculty workload validation within one department must also apply to equivalent faculty allocation scenarios in other departments and institutions.
+
+The ERP must therefore use dynamic, database-driven rules rather than department-specific or hardcoded logic.
+
+
+---
+
+7. Faculty Portal
+
+The Faculty portal shall provide a welcoming and easy-to-understand interface through which faculty members can view available subjects and submit their preferences.
+
+The faculty dashboard shall clearly separate the two academic semester programmes:
+
+1. Odd Semester
+
+
+2. Even Semester
+
+
+
+
+---
+
+8. Semester Programme Selection
+
+The Faculty home page shall contain separate semester programme options for:
+
+Odd Semester
+
+The Odd Semester category shall contain:
+
+Semester 1
+
+Semester 3
+
+Semester 5
+
+
+Even Semester
+
+The Even Semester category shall contain:
+
+Semester 2
+
+Semester 4
+
+Semester 6
+
+
+The exact semester structure must be driven by the academic data available in the ERP.
+
+When the faculty member selects a semester programme, the corresponding syllabus information shall be displayed.
+
+
+---
+
+9. Faculty Subject Selection
+
+When a faculty member selects a particular semester, the system shall display the subjects belonging to that semester.
+
+The subject information must clearly identify the class/programme to which each subject belongs.
+
+This is especially important for the MCA department, where two major class types exist:
+
+1. MCA General / MCA
+
+
+2. MCA GEN AI
+
+
+
+The faculty member must be able to see subjects belonging to both class types, with the class type clearly displayed alongside each subject.
+
+Example
+
+If a faculty member selects Semester 3, the system should display the relevant subjects for:
+
+MCA General – 2nd Year
+
+MCA GEN AI – 2nd Year
+
+
+Each subject must clearly indicate the class type it belongs to.
+
+This prevents ambiguity when similar or related subjects exist across the two MCA divisions.
+
+
+---
+
+10. Subject Selection Interface
+
+Faculty members shall be able to select their preferred subjects using an easy checklist-style interface.
+
+Each subject shall have a selection control, such as a checkbox/tick mark.
+
+The faculty member shall be able to:
+
+1. View the subjects.
+
+
+2. Identify the corresponding class type.
+
+
+3. Select the required subjects.
+
+
+4. Review their selections.
+
+
+5. Submit their preferences to the HOD.
+
+
+
+The same functionality must be available for both Odd and Even semester programmes.
+
+
+---
+
+11. Faculty Subject Preference Rules
+
+The subject preference rules must be displayed prominently at the top of the subject selection screen.
+
+The rules should be written in simple language so that faculty members understand the requirements before making their selections.
+
+11.1 Class Coordinator Core Subject Requirement
+
+If a faculty member is the Class Coordinator for a particular class type, they must select at least one Core subject belonging to that class type.
+
+For example, if a faculty member is the Class Coordinator for MCA GEN AI, they must select at least one Core subject from the MCA GEN AI class type.
+
+11.2 Core and Elective Requirement
+
+For each selected semester, a faculty member must select:
+
+At least one Core subject
+
+At least one Elective subject
+
+
+This rule applies separately to each applicable semester.
+
+For example, under an Odd Semester programme, if the faculty member is selecting subjects for Semester 1 and Semester 3, the applicable selection requirements must be enforced for those semesters.
+
+The same principle applies to the Even Semester programme.
+
+
+---
+
+12. Minor and Multidisciplinary Courses
+
+Minor courses and Multidisciplinary courses shall be treated as optional selections.
+
+These subjects must be clearly marked with an:
+
+(Optional)
+
+tag alongside the course name.
+
+Faculty members may choose these subjects if they wish to do so.
+
+They should not be treated as mandatory requirements for satisfying the Core + Elective selection rule.
+
+
+---
+
+13. Subject Selection Restriction After Required Selection
+
+For each semester, once the faculty member has selected:
+
+At least one Core subject, and
+
+At least one Elective subject,
+
+
+the remaining Core and Elective subjects for that semester should become disabled from further selection.
+
+However:
+
+Minor courses remain selectable.
+
+Multidisciplinary courses remain selectable.
+
+Minor and Multidisciplinary courses continue to display the Optional designation.
+
+
+This rule ensures that the faculty member selects the required combination without unnecessarily selecting additional Core or Elective subjects.
+
+Example
+
+For Semester 3:
+
+1. Faculty selects one Core subject.
+
+
+2. Faculty selects one Elective subject.
+
+
+3. Remaining Core subjects become disabled.
+
+
+4. Remaining Elective subjects become disabled.
+
+
+5. Minor (Optional) remains selectable.
+
+
+6. Multidisciplinary (Optional) remains selectable.
+
+
+
+This behaviour must be applied consistently across all semesters.
+
+
+---
+
+14. Faculty Preference Submission
+
+After selecting the required subjects, the faculty member shall submit the subject preferences to the HOD.
+
+The submitted preferences must be stored against the correct:
+
+Faculty member
+
+Institution
+
+Department
+
+Programme/Class Type
+
+Academic year
+
+Semester
+
+Section/workspace where applicable
+
+Subject
+
+Preference ranking/order
+
+
+The system must not treat submission of a preference as an allocation.
+
+Preference and allocation are two separate stages of the workflow.
+
+
+---
+
+15. Faculty Homepage – Selected Subjects and Status
+
+After submitting their preferences, the faculty member should be able to see the selected subjects on their homepage.
+
+The homepage should clearly communicate the current status of the submission.
+
+Initial Status
+
+After submission:
+
+Selected Subjects
+
+Please wait for HOD's approval
+
+After HOD Approval
+
+Once the HOD approves the relevant preferences:
+
+Approved by HOD
+
+After HOD Finalization
+
+Once the HOD completes the allocation and officially finalizes the workload:
+
+Finalized by HOD
+
+The status should be dynamically obtained from the actual workflow state in the database rather than being a static message.
+
+
+---
+
+16. Global Faculty Workflow
+
+The complete Faculty subject preference workflow shall be available to faculty members across:
+
+All four institutions
+
+All departments
+
+All programmes
+
+All class types
+
+All academic years
+
+All semesters
+
+All faculty accounts
+
+
+The same rules regarding Core, Elective, Minor, Multidisciplinary, class coordinator requirements, preference submission, approval, and finalization must be consistently enforced throughout the ERP.
+
+
+---
+
+17. Overall ERP Workflow
+
+The complete intended workflow can therefore be represented as:
+
+LOGIN
+
+→ Select HOD / Faculty
+
+→ Select Institution
+
+→ Select appropriate Profile
+
+→ Enter ERP
+
+Faculty Flow
+
+Faculty Dashboard
+
+→ Select Odd / Even Semester
+
+→ Select Semester
+
+→ View syllabus
+
+→ Identify MCA / MCA GEN AI / relevant class type
+
+→ Select subjects
+
+→ Apply Core + Elective rules
+
+→ Select Optional Minor/Multidisciplinary courses if required
+
+→ Submit Preferences
+
+→ Please wait for HOD's approval
+
+HOD Flow
+
+HOD Dashboard
+
+→ View Department Faculty
+
+→ Select Faculty
+
+→ View Subject Preferences
+
+→ Approve / Reject
+
+→ Select Section
+
+→ Assign Incharge-1 / Incharge-2
+
+→ Allocate Theory Hours
+
+→ Allocate Lab Hours
+
+→ Calculate Total Hours
+
+→ Validate Faculty Hour Cap
+
+→ Resolve Subject Allocation Conflicts
+
+→ Complete Faculty Allocations
+
+→ Finalize Workload
+
+→ Generate Official Workload
+
+→ Export Workload as PDF
+
+Final Faculty Status
+
+After HOD processing:
+
+Preference Submitted
+→ Please Wait for HOD Approval
+→ Approved by HOD
+→ Finalized by HOD
+
+
+---
+
+18. Core System Principle
+
+The ERP must function as a single, dynamic, database-driven system.
+
+The rules described in this document must not be implemented only for the current MCA example. MCA General and MCA GEN AI are examples used to explain the requirement.
+
+The same underlying system must be capable of handling different institutions, departments, programmes, class types, semesters, subjects, sections, faculty members, and HODs without requiring separate hardcoded logic for each one.
+
+The fundamental workflow is:
+
+Faculty Preference → HOD Review → HOD Allocation → Validation → Workload Finalization → Official Workload → PDF Export
+
+A faculty member's preference must never automatically become an allocation, and only successfully finalized allocation data should be treated as the official workload of the ERP.

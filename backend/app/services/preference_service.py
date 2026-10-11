@@ -14,42 +14,55 @@ class PreferenceService:
             raise HTTPException(status_code=400, detail="User is not linked to a faculty profile")
         return self.repo.get_faculty_submissions(db, user.faculty_profile.id, workspace_id)
 
-    def submit_preferences(self, db: Session, user: User, req: PreferenceSubmitRequest, context: "WorkspaceContext"):
+    def save_draft_preferences(self, db: Session, user: User, req: PreferenceSubmitRequest, context: "WorkspaceContext"):
         if not user.faculty_profile:
             raise HTTPException(status_code=400, detail="User is not linked to a faculty profile")
             
         existing = self.repo.get_by_faculty_and_workspace(db, user.faculty_profile.id, req.workspace_id)
         
-        # Allow re-submission/editing (upsert)
-        # Finalization check could go here if workspace state is tied to this endpoint.
-        if existing:
-            self.repo.delete(db, existing.id)
-            
         # Detect duplicates
         subject_ids = [p.subject_id for p in req.preferences]
         if len(subject_ids) != len(set(subject_ids)):
             raise HTTPException(status_code=400, detail="Duplicate subjects found in preferences")
             
-        sub = PreferenceSubmission(
-            faculty_id=user.faculty_profile.id,
-            workspace_id=req.workspace_id,
-            status=PreferenceStatusEnum.SUBMITTED,
-            submitted_at=datetime.utcnow()
-        )
-        db.add(sub)
-        db.commit()
-        db.refresh(sub)
-        
-        for pref in req.preferences:
-            item = PreferenceItem(
-                submission_id=sub.id,
-                subject_id=pref.subject_id,
-                rank=pref.rank,
-                decision=PreferenceStatusEnum.PENDING
+        if existing:
+            existing.items.clear()
+            db.flush()
+            for pref in req.preferences:
+                item = PreferenceItem(
+                    submission_id=existing.id,
+                    subject_id=pref.subject_id,
+                    rank=pref.rank,
+                    decision=PreferenceStatusEnum.PENDING
+                )
+                existing.items.append(item)
+            existing.status = PreferenceStatusEnum.DRAFT
+            db.commit()
+            return existing
+        else:
+            sub = PreferenceSubmission(
+                faculty_id=user.faculty_profile.id,
+                workspace_id=req.workspace_id,
+                status=PreferenceStatusEnum.DRAFT,
+                review_status=PreferenceStatusEnum.PENDING,
+                submitted_at=None
             )
-            db.add(item)
-        db.commit()
-        return sub
+            db.add(sub)
+            db.flush()
+            for pref in req.preferences:
+                item = PreferenceItem(
+                    submission_id=sub.id,
+                    subject_id=pref.subject_id,
+                    rank=pref.rank,
+                    decision=PreferenceStatusEnum.PENDING
+                )
+                sub.items.append(item)
+            db.commit()
+            return sub
+
+    def submit_preferences(self, db: Session, user: User, req: PreferenceSubmitRequest, context: "WorkspaceContext"):
+        return self.save_draft_preferences(db, user, req, context)
+
 
     def get_all_preferences(self, db: Session, user: User, workspace_id: str):
         if not user.department_id:

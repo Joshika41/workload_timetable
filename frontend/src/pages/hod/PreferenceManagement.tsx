@@ -177,7 +177,7 @@ export default function PreferenceManagement({ workspaceId, wsInfo, onRefresh }:
       [subjectId]: {
         subjectId,
         sectionId: sections[0]?.id || 0,
-        role: 'MAIN',
+        role: 'INCHARGE_1',
         theoryHours: subject.theory_hours || 0,
         practicalHours: subject.practical_hours || 0,
       }
@@ -417,9 +417,8 @@ export default function PreferenceManagement({ workspaceId, wsInfo, onRefresh }:
                                   <select className="form-control"
                                     value={formData.role}
                                     onChange={e => setAllocForms(p => ({ ...p, [sub.id]: { ...p[sub.id], role: e.target.value } }))}>
-                                    <option value="MAIN">Main In-charge</option>
-                                    <option value="IN2">Assistant In-charge (IN-2)</option>
-                                    <option value="ASSISTANT">Assistant</option>
+                                    <option value="INCHARGE_1">Incharge-1</option>
+                                    <option value="INCHARGE_2">Incharge-2</option>
                                   </select>
                                 </div>
                                 <div className="form-group">

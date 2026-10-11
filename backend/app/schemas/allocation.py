@@ -3,13 +3,14 @@ from typing import List, Optional
 
 class AllocationComponentRequest(BaseModel):
     faculty_id: int
-    role: str # MAIN, ASSISTANT, IN2
+    role: str # INCHARGE_1, INCHARGE_2
     theory_hours: int
     practical_hours: int
 
 class SubjectAllocationRequest(BaseModel):
     workspace_id: str
     section_id: int
+    subject_id: int
     components: List[AllocationComponentRequest]
 
 class AllocationComponentResponse(BaseModel):

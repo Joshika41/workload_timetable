@@ -5,6 +5,9 @@ export interface FacultyWorkloadResponse {
   total_theory_hours: number;
   total_practical_hours: number;
   total_teaching_hours: number;
+  campus_work_hours: number;
+  target_workload: number;
+  remaining_capacity: number;
   status: string;
 }
 
@@ -14,7 +17,7 @@ export interface ClassMatrixRow {
   theory: number;
   practical: number;
   total: number;
-  main_faculty: string;
-  assistant_faculty?: string;
+  incharge_1: string;
+  incharge_2?: string;
   status: string;
 }

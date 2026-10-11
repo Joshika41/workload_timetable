@@ -30,11 +30,19 @@ export default function ContextSelection() {
       .catch(() => { toast.error('Failed to load institutions.'); setIsLoadingInst(false); });
   }, []);
 
+  const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
+
   useEffect(() => {
     if (selectedInstId && selectedRole) {
+      setIsLoadingProfiles(true);
       authApi.getProfiles(selectedRole, Number(selectedInstId))
         .then(setProfiles)
-        .catch(() => setProfiles([]));
+        .catch((e: any) => {
+          console.error("Failed to load profiles:", e);
+          toast.error(e.response?.data?.detail || e.message || 'Failed to load profiles.');
+          setProfiles([]);
+        })
+        .finally(() => setIsLoadingProfiles(false));
     } else {
       setProfiles([]);
     }
@@ -47,7 +55,7 @@ export default function ContextSelection() {
     if (!activeProfile) return;
     setIsSubmitting(true);
     try {
-      await realLogin(activeProfile.username, '123456');
+      await realLogin(activeProfile.username, '123456', selectedRole);
     } catch {
       // Error handled in auth.tsx
     } finally {
@@ -74,7 +82,7 @@ export default function ContextSelection() {
       }} />
 
       <div style={{
-        position: 'relative', zIndex: 1, width: '100%', maxWidth: '920px', minHeight: '640px',
+        position: 'relative', zIndex: 1, width: '100%', maxWidth: '1080px', minHeight: '640px',
         display: 'flex', gap: 0, background: 'white',
         borderRadius: '24px', overflow: 'hidden',
         boxShadow: '0 30px 80px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.2)',
@@ -82,70 +90,65 @@ export default function ContextSelection() {
 
         {/* LEFT PANEL — Branding */}
         <div style={{
-          width: '360px', flexShrink: 0,
+          flex: 1,
           background: 'linear-gradient(160deg, #002147 0%, #003580 60%, #001a36 100%)',
-          padding: '48px 36px',
-          display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+          padding: '64px 48px',
+          display: 'flex', flexDirection: 'column', justifyContent: 'center',
           color: 'white', position: 'relative', overflow: 'hidden',
         }}>
-          <div style={{ position: 'absolute', width: 300, height: 300, borderRadius: '50%', background: 'rgba(201,168,76,0.06)', top: -100, right: -80 }} />
-          <div style={{ position: 'absolute', width: 200, height: 200, borderRadius: '50%', background: 'rgba(255,255,255,0.03)', bottom: -60, left: -40 }} />
+          <div style={{ position: 'absolute', width: 400, height: 400, borderRadius: '50%', background: 'rgba(255,255,255,0.03)', top: -150, right: -150 }} />
+          <div style={{ position: 'absolute', width: 300, height: 300, borderRadius: '50%', background: 'rgba(255,255,255,0.02)', bottom: -100, left: -50 }} />
 
           <div style={{ position: 'relative', zIndex: 1 }}>
             <div style={{
-              width: 72, height: 72, background: 'white', borderRadius: '16px',
-              padding: '8px', marginBottom: '24px', overflow: 'hidden',
-              boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+              width: 300,
+              marginBottom: '40px',
             }}>
-              <img src="/srm-logo.jpeg" alt="SRM Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-                onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+              <img src="/SRM%20LOGO.png" alt="SRM Logo" style={{ width: '100%', height: 'auto', objectFit: 'contain' }} />
             </div>
 
-            <h1 style={{ fontSize: '22px', fontWeight: 900, color: 'white', marginBottom: '8px', fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
-              SRM Ramapuram
+            <h2 style={{ fontSize: '20px', fontWeight: 600, color: 'rgba(255,255,255,0.9)', letterSpacing: '0.02em', marginBottom: '16px', lineHeight: 1.4 }}>
+              SRM INSTITUTE OF SCIENCE AND TECHNOLOGY, RAMAPURAM CAMPUS
+            </h2>
+            <h1 style={{ fontSize: '36px', fontWeight: 800, color: 'white', lineHeight: 1.2 }}>
+              WORKLOAD AND TIMETABLE PORTAL
             </h1>
-            <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.55)', lineHeight: 1.6, marginBottom: '32px' }}>
-              Faculty of Science and Humanities<br />
-              Workload & Timetable Portal
-            </p>
-
-            <div style={{
-              background: 'rgba(201,168,76,0.15)', border: '1px solid rgba(201,168,76,0.35)',
-              borderRadius: '12px', padding: '16px 18px',
-            }}>
-              <p style={{ fontSize: '11px', fontWeight: 700, color: '#E8C96B', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '6px' }}>
-                Phase 1 — Workload
-              </p>
-              <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', lineHeight: 1.6 }}>
-                Subject preferences, workload allocation, and class-wise matrix generation.
-              </p>
-            </div>
           </div>
         </div>
 
         {/* RIGHT PANEL — Login UI */}
-        <div style={{ flex: 1, padding: '48px 40px', overflowY: 'auto' }}>
+        <div style={{ flex: 1, padding: '48px 64px', overflowY: 'auto', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           
+          <div style={{ marginBottom: '32px' }}>
+            <h2 style={{ fontSize: '28px', fontWeight: 800, color: '#0F172A', marginBottom: '8px' }}>Portal Sign In</h2>
+            <p style={{ fontSize: '14px', color: '#64748B' }}>Select your login role and choose your profile to proceed</p>
+          </div>
+
           {/* Role Toggle */}
-          <div style={{ display: 'flex', background: '#F8FAFC', borderRadius: '12px', padding: '4px', marginBottom: '32px' }}>
-            <button onClick={() => setSelectedRole('HOD')}
-              style={{
-                flex: 1, padding: '12px', borderRadius: '10px',
-                background: selectedRole === 'HOD' ? '#002147' : 'transparent',
-                color: selectedRole === 'HOD' ? 'white' : '#64748B',
-                fontWeight: 700, fontSize: '14px', transition: 'all 0.2s', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
-              }}>
-              <span>👤</span> HOD
-            </button>
-            <button onClick={() => setSelectedRole('FACULTY')}
-              style={{
-                flex: 1, padding: '12px', borderRadius: '10px',
-                background: selectedRole === 'FACULTY' ? '#002147' : 'transparent',
-                color: selectedRole === 'FACULTY' ? 'white' : '#64748B',
-                fontWeight: 700, fontSize: '14px', transition: 'all 0.2s', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
-              }}>
-              <span>👨‍🏫</span> Faculty
-            </button>
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ fontSize: '11px', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px', display: 'block' }}>
+              Select Login Role
+            </label>
+            <div style={{ display: 'flex', background: '#F8FAFC', borderRadius: '12px', padding: '4px', border: '1px solid #E2E8F0' }}>
+              <button onClick={() => setSelectedRole('HOD')}
+                style={{
+                  flex: 1, padding: '12px', borderRadius: '10px',
+                  background: selectedRole === 'HOD' ? '#002147' : 'transparent',
+                  color: selectedRole === 'HOD' ? 'white' : '#64748B',
+                  fontWeight: 700, fontSize: '14px', transition: 'all 0.2s', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
+                }}>
+                <span>👤</span> HOD
+              </button>
+              <button onClick={() => setSelectedRole('FACULTY')}
+                style={{
+                  flex: 1, padding: '12px', borderRadius: '10px',
+                  background: selectedRole === 'FACULTY' ? '#002147' : 'transparent',
+                  color: selectedRole === 'FACULTY' ? 'white' : '#64748B',
+                  fontWeight: 700, fontSize: '14px', transition: 'all 0.2s', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
+                }}>
+                <span>👨‍🏫</span> Faculty
+              </button>
+            </div>
           </div>
 
           {/* Institution Selector */}
@@ -181,8 +184,9 @@ export default function ContextSelection() {
                 value={selectedProfileId}
                 onChange={e => setSelectedProfileId(e.target.value ? Number(e.target.value) : '')}
                 style={{ height: '48px', fontSize: '15px', fontWeight: 700, color: '#002147', border: '2px solid #002147', borderRadius: '10px', background: '#F8FAFC' }}
+                disabled={isLoadingProfiles}
               >
-                <option value="">— Select Profile —</option>
+                <option value="">{isLoadingProfiles ? '— Loading Profiles... —' : '— Select Profile —'}</option>
                 {profiles.map(p => (
                   <option key={p.user_id} value={p.user_id}>
                     {p.name} — {p.department} ({p.erp_id})

@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import PreferenceManagement from './PreferenceManagement';
 import WorkloadAllocation from './WorkloadAllocation';
 import ClassWiseMatrix from './ClassWiseMatrix';
+import HODTimetable from './HODTimetable';
 
 export default function SemesterWorkspace() {
   const { workspaceId } = useParams<{ workspaceId: string }>();
@@ -28,10 +29,11 @@ export default function SemesterWorkspace() {
   const baseUrl = `/hod/workspace/${workspaceId}`;
   const ctx = session?.context;
 
-  const TABS = [
+    const TABS = [
     { to: baseUrl, label: 'Preference Management', icon: '📝', exact: true },
     { to: `${baseUrl}/allocation`, label: 'Workload Allocation', icon: '📊', exact: false },
     { to: `${baseUrl}/matrix`, label: 'Class-wise Matrix', icon: '📋', exact: false },
+    { to: `${baseUrl}/timetable`, label: 'Timetable', icon: '📅', exact: false },
   ];
 
   return (
@@ -112,6 +114,7 @@ export default function SemesterWorkspace() {
           academicApi.getWorkspaceStatus(workspaceId).then(setWsInfo).catch(() => {});
         }} />} />
         <Route path="/matrix" element={<ClassWiseMatrix workspaceId={workspaceId} />} />
+        <Route path="/timetable" element={<HODTimetable workspaceId={workspaceId} />} />
       </Routes>
     </div>
   );

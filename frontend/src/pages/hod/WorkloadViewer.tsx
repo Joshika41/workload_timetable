@@ -1,133 +1,108 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
-import { academicApi, workloadApi } from '@/api/index';
+import { workloadApi } from '@/api/index';
 import { toast } from 'sonner';
-import ProgressSphere from '@/components/ProgressSphere';
 
 export default function WorkloadViewer() {
   const { session } = useAuth();
-  const [workspaces, setWorkspaces] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'ODD' | 'EVEN'>('ODD');
+  const [workloadData, setWorkloadData] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [expandedWs, setExpandedWs] = useState<string | null>(null);
-  const [workloadData, setWorkloadData] = useState<Record<string, any[]>>({});
-
-  const ctx = session?.context;
 
   useEffect(() => {
-    if (!ctx) return;
-    academicApi.getWorkspacesByContext(ctx.programmeId, ctx.semesterType)
-      .then(setWorkspaces)
-      .catch(() => toast.error('Failed to load workspaces'))
+    setIsLoading(true);
+    workloadApi.getWorkloadViewer(activeTab)
+      .then(setWorkloadData)
+      .catch(() => toast.error('Failed to load workload data'))
       .finally(() => setIsLoading(false));
-  }, [ctx?.programmeId, ctx?.semesterType]);
-
-  const handleExpand = async (wsId: string) => {
-    if (expandedWs === wsId) { setExpandedWs(null); return; }
-    setExpandedWs(wsId);
-    if (!workloadData[wsId]) {
-      try {
-        const data = await workloadApi.getFacultyWorkload(wsId);
-        setWorkloadData(prev => ({ ...prev, [wsId]: data }));
-      } catch {
-        toast.error('Failed to load workload for this semester');
-      }
-    }
-  };
-
-  const handleExport = async (wsId: string) => {
-    try {
-      const blob = await workloadApi.exportPdf(wsId);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `workload_sem_${wsId}.pdf`; a.click();
-      window.URL.revokeObjectURL(url);
-    } catch {
-      toast.error('PDF export failed — ensure this semester is finalized');
-    }
-  };
+  }, [activeTab]);
 
   return (
     <div className="animate-fade-in">
-      <div className="page-header">
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h2 className="page-title">Workload Viewer</h2>
-          <p className="page-subtitle">Quick read-only view of finalized workloads for each semester. Expand a semester to see details.</p>
+          <p className="page-subtitle">Live view of current subject allocations.</p>
+        </div>
+        <div style={{ display: 'flex', background: '#F1F5F9', padding: '4px', borderRadius: '8px' }}>
+          <button 
+            onClick={() => setActiveTab('ODD')}
+            style={{ 
+              padding: '8px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: 600,
+              background: activeTab === 'ODD' ? 'white' : 'transparent', 
+              color: activeTab === 'ODD' ? '#0F172A' : '#64748B',
+              boxShadow: activeTab === 'ODD' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+            }}>
+            View Odd Semester
+          </button>
+          <button 
+            onClick={() => setActiveTab('EVEN')}
+            style={{ 
+              padding: '8px 16px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: 600,
+              background: activeTab === 'EVEN' ? 'white' : 'transparent', 
+              color: activeTab === 'EVEN' ? '#0F172A' : '#64748B',
+              boxShadow: activeTab === 'EVEN' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+            }}>
+            View Even Semester
+          </button>
         </div>
       </div>
 
       {isLoading ? (
-        Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton" style={{ height: 80, marginBottom: 10, borderRadius: 14 }} />)
+        Array.from({ length: 4 }).map((_, i) => <div key={i} className="skeleton" style={{ height: 40, marginBottom: 10, borderRadius: 8 }} />)
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {workspaces.map(ws => {
-            const isFinalized = ws.workflow_state === 'FINALIZED';
-            const isExpanded = expandedWs === ws.workspace_id;
-            const data = workloadData[ws.workspace_id];
-
-            return (
-              <div key={ws.workspace_id} className="card" style={{ overflow: 'hidden' }}>
-                <div
-                  onClick={() => isFinalized && handleExpand(ws.workspace_id)}
-                  style={{
-                    padding: '18px 22px', display: 'flex', alignItems: 'center', gap: '16px',
-                    cursor: isFinalized ? 'pointer' : 'default',
-                    background: isExpanded ? '#F0F7FF' : 'white',
-                  }}
-                >
-                  <div style={{ width: 48, height: 48, borderRadius: '12px', background: isFinalized ? '#ECFDF5' : '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', flexShrink: 0 }}>
-                    {isFinalized ? '✅' : '⏳'}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '15px' }}>Semester {ws.semester}</div>
-                    <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
-                      {isFinalized ? `Finalized · ${ws.allocated_count} faculty allocated` : 'Not finalized yet'}
-                    </div>
-                  </div>
-                  <ProgressSphere percent={ws.progress_percent} size={56} strokeWidth={5} />
-                  {isFinalized && (
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button className="btn btn-outline btn-sm" onClick={e => { e.stopPropagation(); handleExport(ws.workspace_id); }}>
-                        📥 PDF
-                      </button>
-                      <span style={{ fontSize: '18px', color: '#94A3B8' }}>{isExpanded ? '▲' : '▼'}</span>
-                    </div>
-                  )}
-                  {!isFinalized && (
-                    <span className="chip chip-not-started">No workload generated yet</span>
-                  )}
-                </div>
-
-                {isExpanded && data && (
-                  <div style={{ borderTop: '1px solid #E2E8F0', overflow: 'auto' }}>
-                    <table className="erp-table">
-                      <thead>
-                        <tr>
-                          <th>Faculty</th>
-                          <th>Designation</th>
-                          <th style={{ textAlign: 'right' }}>Theory</th>
-                          <th style={{ textAlign: 'right' }}>Practical</th>
-                          <th style={{ textAlign: 'right' }}>Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.map((f: any) => (
-                          <tr key={f.faculty_id}>
-                            <td style={{ fontWeight: 600 }}>{f.faculty_name}</td>
-                            <td style={{ color: '#64748B', fontSize: '12px' }}>{f.designation}</td>
-                            <td style={{ textAlign: 'right' }}>{f.total_theory}h</td>
-                            <td style={{ textAlign: 'right' }}>{f.total_practical}h</td>
-                            <td style={{ textAlign: 'right', fontWeight: 700, color: '#002147' }}>
-                              {f.total_theory + f.total_practical}h
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            );
-          })}
+        <div className="card" style={{ overflow: 'auto' }}>
+          {workloadData.length === 0 ? (
+            <div className="empty-state" style={{ padding: '40px' }}>
+              <div className="empty-state-icon">📋</div>
+              <h3 className="empty-state-title">No allocations</h3>
+              <p className="empty-state-desc">No allocations have been made yet.</p>
+            </div>
+          ) : (
+            <table className="erp-table" style={{ whiteSpace: 'nowrap' }}>
+              <thead>
+                <tr>
+                  <th>Faculty</th>
+                  <th>Department</th>
+                  <th>Programme</th>
+                  <th>Subject Code</th>
+                  <th>Subject Name</th>
+                  <th>Semester</th>
+                  <th>Section</th>
+                  <th>Role</th>
+                  <th style={{ textAlign: 'right' }}>Theory Hours</th>
+                  <th style={{ textAlign: 'right' }}>Lab Hours</th>
+                  <th style={{ textAlign: 'right' }}>Total Hours</th>
+                  <th>Allocation Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {workloadData.map((row: any, idx: number) => (
+                  <tr key={idx}>
+                    <td style={{ fontWeight: 600 }}>{row.faculty_name}</td>
+                    <td>{row.department}</td>
+                    <td>{row.programme}</td>
+                    <td style={{ fontFamily: 'monospace', color: '#64748B' }}>{row.subject_code}</td>
+                    <td style={{ fontWeight: 600 }}>{row.subject_name}</td>
+                    <td>{row.semester}</td>
+                    <td>{row.section}</td>
+                    <td>{row.role}</td>
+                    <td style={{ textAlign: 'right' }}>{row.theory_hours}</td>
+                    <td style={{ textAlign: 'right' }}>{row.lab_hours}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700, color: '#0F172A' }}>{row.total_hours}</td>
+                    <td>
+                      <span style={{ 
+                        padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700,
+                        background: '#EFF6FF', color: '#1D4ED8'
+                      }}>
+                        {row.allocation_status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
     </div>

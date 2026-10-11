@@ -55,13 +55,14 @@ export default function ClassWiseMatrix({ workspaceId }: Props) {
                     <th style={{ minWidth: 180, background: '#002147', color: 'white' }}>Subject</th>
                     {(classBlock.sections || []).map((s: any) => (
                       <>
-                        <th key={`${s.name}-main`} style={{ background: '#002147', color: 'white' }}>Sec {s.name} — Main</th>
-                        <th key={`${s.name}-asst`} style={{ background: '#002147', color: 'white' }}>Sec {s.name} — Asst</th>
+                        <th key={`${s.name}-in1`} style={{ background: '#002147', color: 'white' }}>Sec {s.name} — Incharge-1</th>
+                        <th key={`${s.name}-in2`} style={{ background: '#002147', color: 'white' }}>Sec {s.name} — Incharge-2</th>
                       </>
                     ))}
-                    <th style={{ textAlign: 'right', background: '#001530', color: 'white' }}>Total</th>
-                    <th style={{ textAlign: 'right', background: '#001530', color: 'white' }}>Theory</th>
-                    <th style={{ textAlign: 'right', background: '#001530', color: 'white' }}>Lab</th>
+                    <th style={{ textAlign: 'right', background: '#001530', color: 'white' }}>Class Total</th>
+                    <th style={{ textAlign: 'right', background: '#001530', color: 'white' }}>Required Total</th>
+                    <th style={{ textAlign: 'right', background: '#001530', color: 'white' }}>Difference</th>
+                    <th style={{ textAlign: 'center', background: '#001530', color: 'white' }}>Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -75,18 +76,37 @@ export default function ClassWiseMatrix({ workspaceId }: Props) {
                         const allocation = subRow.sections?.[sec.name] || {};
                         return (
                           <>
-                            <td key={`${sec.name}-main`} className={allocation.main ? 'faculty-cell' : 'unallocated'}>
-                              {allocation.main || '—'}
+                            <td key={`${sec.name}-in1`} className={allocation['Incharge-1'] ? 'faculty-cell' : 'unallocated'}>
+                              {allocation['Incharge-1']?.name || '—'} 
+                              {allocation['Incharge-1'] && (
+                                <div style={{ fontSize: '10px', color: '#64748B' }}>
+                                  T:{allocation['Incharge-1'].theory} L:{allocation['Incharge-1'].lab} Tot:{allocation['Incharge-1'].total}
+                                </div>
+                              )}
                             </td>
-                            <td key={`${sec.name}-asst`} className={allocation.assistant ? 'faculty-cell' : 'unallocated'} style={{ color: '#64748B' }}>
-                              {allocation.assistant || '—'}
+                            <td key={`${sec.name}-in2`} className={allocation['Incharge-2'] ? 'faculty-cell' : 'unallocated'} style={{ color: '#64748B' }}>
+                              {allocation['Incharge-2']?.name || '—'}
+                              {allocation['Incharge-2'] && (
+                                <div style={{ fontSize: '10px', color: '#64748B' }}>
+                                  T:{allocation['Incharge-2'].theory} L:{allocation['Incharge-2'].lab} Tot:{allocation['Incharge-2'].total}
+                                </div>
+                              )}
                             </td>
                           </>
                         );
                       })}
-                      <td style={{ textAlign: 'right', fontWeight: 700 }}>{subRow.total_hours}h</td>
-                      <td style={{ textAlign: 'right' }}>{subRow.theory_hours}h</td>
-                      <td style={{ textAlign: 'right' }}>{subRow.lab_hours}h</td>
+                      <td style={{ textAlign: 'right', fontWeight: 700 }}>{subRow.allocated_total}h</td>
+                      <td style={{ textAlign: 'right' }}>{subRow.required_total}h</td>
+                      <td style={{ textAlign: 'right', color: subRow.difference !== 0 ? '#DC2626' : '#16A34A' }}>{subRow.difference}h</td>
+                      <td style={{ textAlign: 'center' }}>
+                        <span style={{ 
+                          padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 700,
+                          background: subRow.status === 'RECONCILED' ? '#F0FDF4' : '#FEF2F2',
+                          color: subRow.status === 'RECONCILED' ? '#16A34A' : '#DC2626'
+                        }}>
+                          {subRow.status}
+                        </span>
+                      </td>
                     </tr>
                   ))}
                   {/* Footer totals */}
@@ -94,8 +114,8 @@ export default function ClassWiseMatrix({ workspaceId }: Props) {
                     <td style={{ fontWeight: 800, color: '#002147' }}>TOTAL</td>
                     {(classBlock.sections || []).map((s: any) => (
                       <>
-                        <td key={`${s.name}-main-total`} />
-                        <td key={`${s.name}-asst-total`} />
+                        <td key={`${s.name}-in1-total`} />
+                        <td key={`${s.name}-in2-total`} />
                       </>
                     ))}
                     <td style={{ textAlign: 'right', fontWeight: 800, color: '#002147' }}>{classBlock.total_hours}h</td>

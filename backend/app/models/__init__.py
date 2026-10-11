@@ -20,3 +20,26 @@ from .domain import (
     AllocationComponent,
     AuditLog
 )
+
+from .timetable import (
+    TimetableConfiguration,
+    TimetableShift,
+    TimetableWorkingDay,
+    TimetablePeriod,
+    TimetableBreak,
+    TimetableRoom,
+    TimetableFacultyAvailability,
+    TimetableSectionAvailability,
+    TimetableRoomAvailability,
+    SynchronizedGroup,
+    SynchronizedGroupMember,
+    TeachingSession,
+    TimetableConstraint,
+    TimetableRun,
+    TimetableVersion,
+    TimetableEntry,
+    TimetableStatusEnum,
+    TimetableVersionStatusEnum,
+    AvailabilityStatusEnum,
+    ConstraintTypeEnum
+)

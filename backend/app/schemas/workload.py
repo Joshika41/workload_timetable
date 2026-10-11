@@ -8,6 +8,9 @@ class FacultyWorkloadResponse(BaseModel):
     total_theory_hours: int
     total_practical_hours: int
     total_teaching_hours: int
+    campus_work_hours: int
+    target_workload: int
+    remaining_capacity: int
     status: str
 
 class ClassMatrixRow(BaseModel):
@@ -18,6 +21,6 @@ class ClassMatrixRow(BaseModel):
     theory: int
     practical: int
     total: int
-    main_faculty: str
-    assistant_faculty: Optional[str]
+    incharge_1: str
+    incharge_2: Optional[str]
     status: str

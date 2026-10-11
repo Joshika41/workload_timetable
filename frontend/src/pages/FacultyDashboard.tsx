@@ -7,15 +7,18 @@ import { BookOpen, Layers, Select, ChevronRight, GraduationCap } from 'lucide-re
 import { Button } from '@/components/ui/button';
 
 export default function FacultyDashboard() {
-  const { user, logOut, workspaceFilters } = useAuth();
+  const { session, logOut } = useAuth();
   const navigate = useNavigate();
   const [workspaces, setWorkspaces] = useState<AcademicWorkspaceResponse[]>([]);
   const [department, setDepartment] = useState<DepartmentResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  const workspaceFilters = session?.context;
+
   useEffect(() => {
     academicApi.getDepartments().then(depts => {
-      const currentDept = depts.find(d => d.id === user?.department_id);
+      // Find department by matching name since session.context.departmentId actually stores the name string in ContextSelection
+      const currentDept = depts.find(d => d.name === session?.context?.departmentId?.toString() || d.id === Number(session?.context?.departmentId));
       if (currentDept) setDepartment(currentDept);
     });
 
@@ -26,7 +29,7 @@ export default function FacultyDashboard() {
       console.error(err);
       setIsLoading(false);
     });
-  }, [user]);
+  }, [session]);
 
   const filteredWorkspaces = workspaces.filter(w => {
     if (!workspaceFilters) return true;
@@ -47,7 +50,7 @@ export default function FacultyDashboard() {
       <header className="bg-[#002147] text-white px-8 py-4 flex items-center justify-between sticky top-0 z-50 shadow-md">
         <div className="flex items-center gap-4">
           <div className="size-10 bg-white rounded flex items-center justify-center">
-            <img src="/srm-logo.jpeg" alt="SRM Logo" className="size-8 object-contain" />
+            <img src="/SRM%20LOGO.png" alt="SRM Logo" className="size-8 object-contain" />
           </div>
           <div>
             <h1 className="font-bold text-lg leading-tight tracking-tight">Faculty Portal</h1>
@@ -58,7 +61,7 @@ export default function FacultyDashboard() {
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right hidden md:block">
-            <p className="text-sm font-semibold">{user?.name}</p>
+            <p className="text-sm font-semibold">{session?.name}</p>
             <p className="text-xs text-blue-300">Faculty</p>
           </div>
           <Button variant="outline" className="text-[#002147] bg-white hover:bg-slate-100 border-none" onClick={logOut}>

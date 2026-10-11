@@ -22,7 +22,7 @@ export default function FacultyShell() {
       <aside className="erp-sidebar">
         <div className="sidebar-brand">
           <div className="sidebar-logo">
-            <img src="/srm-logo.jpeg" alt="SRM" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+            <img src="/SRM%20LOGO.png" alt="SRM" />
           </div>
           <div className="sidebar-brand-text">
             <div className="sidebar-brand-title">SRM Workload</div>

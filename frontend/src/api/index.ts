@@ -57,8 +57,12 @@ export const allocationApi = {
 
 // ── Workload
 export const workloadApi = {
+  getDashboardStats: (semesterType?: string, workspaceId?: string) =>
+    apiClient.get('/workload/dashboard', { params: { semester_type: semesterType, workspace_id: workspaceId } }).then(r => r.data),
   getFacultyWorkload: (workspaceId: string) =>
     apiClient.get('/workload/faculty', { params: { workspace_id: workspaceId } }).then(r => r.data),
+  getWorkloadViewer: (semesterType: string) =>
+    apiClient.get(`/workload/viewer/${semesterType}`).then(r => r.data),
   getClassMatrix: (workspaceId: string) =>
     apiClient.get('/workload/class-matrix', { params: { workspace_id: workspaceId } }).then(r => r.data),
   getMySubjects: (workspaceId: string) =>

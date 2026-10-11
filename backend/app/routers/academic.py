@@ -5,7 +5,7 @@ from app.database.connection import get_db
 from app.models.domain import (
     Department, Programme, AcademicYear, CurriculumOffering, Section,
     User, AcademicWorkspace, WorkspaceWorkflowStateEnum, FacultyProfile,
-    Institution
+    Institution, RoleEnum
 )
 from app.auth.dependencies import get_current_user, require_role
 from app.schemas.academic import DepartmentResponse, AcademicWorkspaceResponse
@@ -69,14 +69,39 @@ def get_programme_semesters(
 @router.get("/faculty/list")
 def get_faculty_for_context(
     department_id: Optional[int] = Query(None),
+    workspace_id: Optional[str] = Query(None),
+    curriculum_offering_id: Optional[int] = Query(None),
     db: Session = Depends(get_db)
 ):
-    """Get faculty list for a department (for 'who are you' selector and HOD allocation pool)."""
+    """Get faculty list for a department or specific offering/workspace (HOD allocation pool)."""
+    from app.models.domain import FacultyWorkspaceScope, OfferingTeachingRule, FacultyTeachingEligibility
+    
     query = db.query(FacultyProfile).join(User, FacultyProfile.user_id == User.id)
-    if department_id:
+    
+    if curriculum_offering_id and workspace_id:
+        rule = db.query(OfferingTeachingRule).filter_by(curriculum_offering_id=curriculum_offering_id).first()
+        if rule and rule.cross_department_allowed:
+            # Can be home-workspace faculty OR anyone with matching teaching domain
+            # We will fetch faculty in the workspace, PLUS any faculty (even other depts) with matching eligibility
+            query = query.outerjoin(FacultyWorkspaceScope, FacultyWorkspaceScope.faculty_id == FacultyProfile.id)\
+                         .outerjoin(FacultyTeachingEligibility, FacultyTeachingEligibility.faculty_id == FacultyProfile.id)\
+                         .filter(
+                             (FacultyWorkspaceScope.workspace_id == workspace_id) |
+                             (FacultyTeachingEligibility.domain_code == rule.teaching_domain_code)
+                         )
+        else:
+            # Normal home-workspace faculty
+            query = query.join(FacultyWorkspaceScope, FacultyWorkspaceScope.faculty_id == FacultyProfile.id)\
+                         .filter(FacultyWorkspaceScope.workspace_id == workspace_id)
+    elif workspace_id:
+        # Fallback to workspace members
+        query = query.join(FacultyWorkspaceScope, FacultyWorkspaceScope.faculty_id == FacultyProfile.id)\
+                     .filter(FacultyWorkspaceScope.workspace_id == workspace_id)
+    elif department_id:
         query = query.filter(User.department_id == department_id)
     
-    profiles = query.all()
+    # Need distinct because of outer joins
+    profiles = query.distinct().all()
     return [
         {
             "id": p.id,
@@ -127,16 +152,38 @@ def get_academic_workspaces(db: Session = Depends(get_db), current_user: User = 
 
 @router.get("/workspaces-by-context")
 def get_workspaces_by_context(
-    programme_id: int,
+    programme_id: int = 0,
     semester_type: str = "ODD",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get all workspaces for a specific programme and semester type."""
-    workspaces = db.query(AcademicWorkspace).filter(
-        AcademicWorkspace.programme_id == programme_id,
-        AcademicWorkspace.department_id == current_user.department_id
-    ).all()
+    """Get all workspaces for a specific programme and semester type. If programme_id is 0, returns all for department."""
+    from app.models.domain import AcademicWorkspace, FacultyProfile, FacultyWorkspaceScope
+    
+    query = db.query(AcademicWorkspace)
+    
+    is_hod = False
+    if current_user.role == RoleEnum.HOD or current_user.role == RoleEnum.ERP_COORDINATOR:
+        is_hod = True
+    elif current_user.role == RoleEnum.FACULTY:
+        fp = current_user.faculty_profile
+        if fp and ('HOD' in fp.designation.upper() or 'HEAD' in fp.designation.upper()):
+            is_hod = True
+
+    if not is_hod:
+        query = query.join(FacultyWorkspaceScope, FacultyWorkspaceScope.workspace_id == AcademicWorkspace.id)\
+                     .join(FacultyProfile, FacultyProfile.id == FacultyWorkspaceScope.faculty_id)\
+                     .filter(FacultyProfile.user_id == current_user.id)
+    else:
+        # HOD / Admin sees department workspaces
+        query = query.filter(AcademicWorkspace.department_id == current_user.department_id)
+
+    if programme_id:
+        from app.models.domain import WorkspaceProgrammeMap
+        query = query.join(WorkspaceProgrammeMap, WorkspaceProgrammeMap.workspace_id == AcademicWorkspace.id)\
+                     .filter(WorkspaceProgrammeMap.programme_id == programme_id)
+                     
+    workspaces = query.all()
 
     result = []
     for w in workspaces:
@@ -209,12 +256,19 @@ def get_subjects(
     db: Session = Depends(get_db),
     workspace: WorkspaceContext = Depends(verify_workspace_access)
 ):
-    offerings = db.query(CurriculumOffering).filter(
+    from app.models.domain import OfferingTeachingRule
+    
+    # We join OfferingTeachingRule and filter to keep those where preference_eligible is True or there is no rule
+    offerings_query = db.query(CurriculumOffering).outerjoin(
+        OfferingTeachingRule, OfferingTeachingRule.curriculum_offering_id == CurriculumOffering.id
+    ).filter(
         CurriculumOffering.programme_id == workspace.programme_id,
         CurriculumOffering.programme_year == workspace.programme_year,
         CurriculumOffering.academic_year_id == workspace.academic_year_id,
-        CurriculumOffering.semester == workspace.semester
-    ).all()
+        CurriculumOffering.semester == workspace.semester,
+        (OfferingTeachingRule.id == None) | (OfferingTeachingRule.preference_eligible == True)
+    )
+    offerings = offerings_query.all()
 
     result = []
     seen_codes = set()

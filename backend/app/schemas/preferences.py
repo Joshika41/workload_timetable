@@ -1,4 +1,4 @@
-﻿from pydantic import BaseModel
+from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 
@@ -34,3 +34,13 @@ class PreferenceDecisionRequest(BaseModel):
 
 class SubmissionReviewRequest(BaseModel):
     review_status: str  # APPROVED, PENDING, DENIED
+
+class SemesterSelection(BaseModel):
+    semester_number: int
+    programme_id: int
+    subject_ids: List[int]
+
+class TermPreferenceSubmitRequest(BaseModel):
+    semester_type: str  # 'ODD' or 'EVEN'
+    selections: Optional[List[SemesterSelection]] = None
+

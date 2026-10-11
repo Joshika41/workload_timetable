@@ -1,0 +1,44 @@
+# Environment & credentials
+.env
+*.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+*.db
+*.sqlite3
+
+# Node & Frontend
+node_modules/
+dist/
+.output/
+.workspace/
+.wrangler/
+backend-service/
+.lovable/
+
+# Temporary / Scratch artifacts & archives
+*.zip
+*.log
+output.json
+output.txt
+*test_output*.txt
+backend/*.txt
+backend/*.json
+backend/test_write.py
+backend/test_sqlite.py
+backend/output.json
+backend/output.txt
+backend/phase9e2_test_output*.txt
+frontend/dist/
+frontend/node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db

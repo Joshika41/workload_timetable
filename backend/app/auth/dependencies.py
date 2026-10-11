@@ -29,7 +29,14 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
 def require_role(allowed_roles: list):
     def role_checker(current_user: User = Depends(get_current_user)):
-        if current_user.role.value not in allowed_roles:
+        has_permission = current_user.role.value in allowed_roles
+        
+        # Dynamic HOD authorization based on real dataset designations
+        if not has_permission and 'HOD' in allowed_roles and current_user.role.value == 'FACULTY':
+            if current_user.faculty_profile and ('HOD' in current_user.faculty_profile.designation or 'Head' in current_user.faculty_profile.designation):
+                has_permission = True
+                
+        if not has_permission:
             raise HTTPException(status_code=403, detail="Not enough permissions")
         return current_user
     return role_checker

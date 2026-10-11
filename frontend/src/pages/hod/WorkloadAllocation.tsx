@@ -124,8 +124,8 @@ export default function WorkloadAllocation({ workspaceId, wsInfo, onRefresh }: P
                           <span className="chip chip-submitted">{alloc.class_name} / Sec {alloc.section_name}</span>
                         </td>
                         <td>
-                          <span className={`chip ${alloc.role === 'MAIN' ? 'chip-core' : 'chip-elective'}`}>
-                            {alloc.role === 'MAIN' ? 'Main' : alloc.role === 'IN2' ? 'IN-2' : alloc.role}
+                          <span className={`chip ${(alloc.role === 'INCHARGE_1' || alloc.role === 'Incharge-1') ? 'chip-core' : 'chip-elective'}`}>
+                            {(alloc.role === 'INCHARGE_1' || alloc.role === 'Incharge-1') ? 'Incharge-1' : (alloc.role === 'INCHARGE_2' || alloc.role === 'Incharge-2') ? 'Incharge-2' : alloc.role}
                           </span>
                         </td>
                         <td style={{ textAlign: 'right', fontWeight: 600 }}>

@@ -26,11 +26,18 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    access_token = create_access_token(data={"sub": str(user.id), "role": user.role.value})
-    
     faculty_profile = db.query(FacultyProfile).filter(FacultyProfile.user_id == user.id).first()
+    
+    # Dynamic Role Elevation for HOD
+    effective_role = user.role.value
+    if 'HOD' in form_data.scopes and effective_role == 'FACULTY' and faculty_profile:
+        if 'HOD' in faculty_profile.designation or 'Head' in faculty_profile.designation:
+            effective_role = 'HOD'
+            
+    access_token = create_access_token(data={"sub": str(user.id), "role": effective_role})
+    
     name = faculty_profile.name if faculty_profile else user.email
-    designation = faculty_profile.designation if faculty_profile else user.role.value
+    designation = faculty_profile.designation if faculty_profile else effective_role
     erp_id = faculty_profile.erp_id if faculty_profile else user.email
     
     dept = db.query(Department).filter(Department.id == user.department_id).first()
@@ -43,7 +50,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     return {
         "access_token": access_token, 
         "token_type": "bearer",
-        "role": user.role.value,
+        "role": effective_role,
         "name": name,
         "user_id": user.id,
         "faculty_profile_id": faculty_profile.id if faculty_profile else None,
@@ -129,19 +136,28 @@ def get_profiles(role: str, institution_id: int, db: Session = Depends(get_db)):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid role")
         
-    query = db.query(User).join(Department, User.department_id == Department.id)
+    query = db.query(User, FacultyProfile, Department)\
+        .outerjoin(FacultyProfile, FacultyProfile.user_id == User.id)\
+        .outerjoin(Department, User.department_id == Department.id)
+    
     if req_role == RoleEnum.HOD:
-        query = query.filter(User.role.in_([RoleEnum.HOD, RoleEnum.ERP_COORDINATOR]))
+        from sqlalchemy import or_
+        query = query.filter(
+            or_(
+                User.role.in_([RoleEnum.HOD, RoleEnum.ERP_COORDINATOR]),
+                FacultyProfile.designation.ilike('%HOD%'),
+                FacultyProfile.designation.ilike('%Head%')
+            )
+        )
     else:
-        query = query.filter(User.role == req_role)
+        from sqlalchemy import or_
+        query = query.filter(or_(User.role == req_role, User.role == RoleEnum.HOD))
         
     query = query.filter(Department.institution_id == institution_id)
-    users = query.all()
+    results = query.all()
     
     profiles = []
-    for u in users:
-        fp = db.query(FacultyProfile).filter(FacultyProfile.user_id == u.id).first()
-        dept = db.query(Department).filter(Department.id == u.department_id).first()
+    for u, fp, dept in results:
         name = fp.name if fp else (u.email.split('@')[0].title())
         designation = fp.designation if fp else (req_role.value)
         erp_id = fp.erp_id if fp else u.email

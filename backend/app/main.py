@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, academic, faculty, preferences, allocation, workload
+from app.routers import auth, academic, faculty, preferences, allocation, workload, timetable
 
 app = FastAPI(
     title="Workload and Timetable Portal API",
@@ -23,6 +23,7 @@ app.include_router(faculty.router, prefix="/api/faculty", tags=["Faculty"])
 app.include_router(preferences.router, prefix="/api", tags=["Preferences"])
 app.include_router(allocation.router, prefix="/api/allocations", tags=["Allocations"])
 app.include_router(workload.router, prefix="/api/workload", tags=["Workload"])
+app.include_router(timetable.router, prefix="/api/timetable", tags=["Timetable"])
 
 @app.get("/health")
 def health_check():

@@ -60,7 +60,8 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
 
-    config.set_main_option("sqlalchemy.url", DATABASE_URL)
+    safe_url = DATABASE_URL.replace("%", "%%")
+    config.set_main_option("sqlalchemy.url", safe_url)
 
     """Run migrations in 'online' mode.
 

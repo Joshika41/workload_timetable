@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Enum, ForeignKey, Float, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, Enum, ForeignKey, Float, DateTime, UniqueConstraint
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.sql import func
 import enum
@@ -42,7 +42,8 @@ class AllocationRoleEnum(str, enum.Enum):
 class Institution(Base):
     __tablename__ = 'institutions'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, nullable=False, unique=True)
+    code = Column(String, nullable=False, unique=True, default="")
+    name = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class Department(Base):
@@ -94,6 +95,10 @@ class FacultyProfile(Base):
     is_placeholder = Column(Boolean, default=False)
     is_dummy = Column(Boolean, default=False)
     
+    seniority_index = Column(Integer, default=999)
+    target_workload = Column(Integer, default=18)
+    campus_work_hours = Column(Integer, default=0)
+    
     user = relationship("User", back_populates="faculty_profile")
     home_department = relationship("Department")
 
@@ -122,20 +127,79 @@ class AcademicWorkspace(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     department = relationship("Department")
+    # deprecated: programme relationship, keeping it for now
     programme = relationship("Programme")
     academic_year = relationship("AcademicYear")
     semester = relationship("Semester")
+    
+    # New M:N mapped programmes
+    mapped_programmes = relationship("WorkspaceProgrammeMap", back_populates="workspace")
+
+class WorkspaceProgrammeMap(Base):
+    __tablename__ = 'workspace_programme_map'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(String, ForeignKey('academic_workspaces.id'), nullable=False)
+    programme_id = Column(Integer, ForeignKey('programmes.id'), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    workspace = relationship("AcademicWorkspace", back_populates="mapped_programmes")
+    programme = relationship("Programme")
+
+class FacultyWorkspaceScope(Base):
+    __tablename__ = 'faculty_workspace_scopes'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    faculty_id = Column(Integer, ForeignKey('faculty_profiles.id'), nullable=False)
+    workspace_id = Column(String, ForeignKey('academic_workspaces.id'), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    faculty = relationship("FacultyProfile")
+    workspace = relationship("AcademicWorkspace")
+
+class FacultyProgrammeScope(Base):
+    __tablename__ = 'faculty_programme_scopes'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    faculty_id = Column(Integer, ForeignKey('faculty_profiles.id'), nullable=False)
+    programme_id = Column(Integer, ForeignKey('programmes.id'), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    faculty = relationship("FacultyProfile")
+    programme = relationship("Programme")
 
 class Subject(Base):
     __tablename__ = 'subjects'
+    __table_args__ = (
+        UniqueConstraint('course_code', 'course_name', name='subjects_code_name_key'),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
-    course_code = Column(String, nullable=False, unique=True)
+    course_code = Column(String, nullable=False)
     course_name = Column(String, nullable=False)
     credits = Column(Integer, nullable=True)
     theory_hours = Column(Integer, default=0)
     practical_hours = Column(Integer, default=0)
     total_hours = Column(Integer, default=0)
     category = Column(String, default='CORE')
+
+class TeachingDomain(Base):
+    __tablename__ = 'teaching_domains'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    domain_code = Column(String, unique=True, nullable=False)
+    domain_name = Column(String, nullable=False)
+    domain_type = Column(String, nullable=True)
+    status = Column(String, default="ACTIVE")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class FacultyTeachingEligibility(Base):
+    __tablename__ = 'faculty_teaching_eligibility'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    faculty_id = Column(Integer, ForeignKey('faculty_profiles.id'), nullable=False)
+    domain_code = Column(String, ForeignKey('teaching_domains.domain_code'), nullable=False)
+    eligibility_scope = Column(String, nullable=True)
+    status = Column(String, default="ACTIVE")
+    source_reference = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    faculty = relationship("FacultyProfile")
+    domain = relationship("TeachingDomain")
 
 class CurriculumOffering(Base):
     __tablename__ = 'curriculum_offerings'
@@ -146,10 +210,27 @@ class CurriculumOffering(Base):
     programme_year = Column(Integer, nullable=False) # e.g. 1
     semester = Column(Integer, nullable=False) # e.g. 1
     semester_type = Column(Enum(SemesterTypeEnum), nullable=False)
+    requires_preference = Column(Boolean, default=True)
     
     programme = relationship("Programme")
     academic_year = relationship("AcademicYear")
     subject = relationship("Subject")
+    teaching_rule = relationship("OfferingTeachingRule", back_populates="offering", uselist=False)
+
+class OfferingTeachingRule(Base):
+    __tablename__ = 'offering_teaching_rules'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    curriculum_offering_id = Column(Integer, ForeignKey('curriculum_offerings.id'), nullable=False, unique=True)
+    teaching_domain_code = Column(String, ForeignKey('teaching_domains.domain_code'), nullable=False)
+    teaching_model = Column(String, default="HOME_DEPARTMENT") # HOME_DEPARTMENT, SERVICE_DEPARTMENT, SHARED
+    cross_department_allowed = Column(Boolean, default=False)
+    preference_eligible = Column(Boolean, default=True)
+    status = Column(String, default="ACTIVE")
+    source_reference = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    offering = relationship("CurriculumOffering", back_populates="teaching_rule")
+    domain = relationship("TeachingDomain")
 
 class Section(Base):
     __tablename__ = 'sections'
@@ -157,6 +238,8 @@ class Section(Base):
     workspace_id = Column(String, ForeignKey('academic_workspaces.id'), nullable=False)
     curriculum_offering_id = Column(Integer, ForeignKey('curriculum_offerings.id'), nullable=True) # Keeping nullable for backward compatibility
     name = Column(String, nullable=False) # e.g. A, B
+    student_strength = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
     
     workspace = relationship("AcademicWorkspace")
     curriculum_offering = relationship("CurriculumOffering")
@@ -189,6 +272,9 @@ class PreferenceItem(Base):
 
 class SubjectAllocation(Base):
     __tablename__ = 'subject_allocations'
+    __table_args__ = (
+        UniqueConstraint('workspace_id', 'section_id', 'subject_id', name='uq_subject_allocations_ws_sec_subj'),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     workspace_id = Column(String, ForeignKey('academic_workspaces.id'), nullable=False)
     section_id = Column(Integer, ForeignKey('sections.id'), nullable=False)
@@ -205,6 +291,9 @@ class SubjectAllocation(Base):
 
 class AllocationComponent(Base):
     __tablename__ = 'allocation_components'
+    __table_args__ = (
+        UniqueConstraint('allocation_id', name='uq_allocation_components_alloc_id'),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     allocation_id = Column(Integer, ForeignKey('subject_allocations.id'), nullable=False)
     faculty_id = Column(Integer, ForeignKey('faculty_profiles.id'), nullable=False)

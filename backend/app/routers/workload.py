@@ -8,6 +8,7 @@ from app.services.workload_service import WorkloadService
 from app.services.pdf_service import PDFService
 from app.auth.workspace_auth import verify_workspace_access
 from app.core.workspace import WorkspaceContext
+from collections import defaultdict
 import json
 
 router = APIRouter()

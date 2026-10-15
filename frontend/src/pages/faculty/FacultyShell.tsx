@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '@/lib/auth';
 import FacultyHome from './FacultyHome';
 import MySubjects from './MySubjects';
+import FacultyTimetable from './FacultyTimetable';
 
 export default function FacultyShell() {
   const { session, logOut } = useAuth();
@@ -61,6 +62,10 @@ export default function FacultyShell() {
             <span style={{ fontSize: '16px' }}>📚</span>
             <span>My Subjects</span>
           </NavLink>
+          <NavLink to="/faculty/timetable" className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}>
+            <span style={{ fontSize: '16px' }}>📅</span>
+            <span>My Timetable</span>
+          </NavLink>
 
           <div className="sidebar-section-label" style={{ marginTop: '16px' }}>Account</div>
           <button className="sidebar-item" onClick={logOut} style={{ color: 'rgba(255,100,100,0.7)' }}>
@@ -100,6 +105,7 @@ export default function FacultyShell() {
           <Routes>
             <Route path="/" element={<FacultyHome />} />
             <Route path="/my-subjects" element={<MySubjects />} />
+            <Route path="/timetable" element={<FacultyTimetable />} />
             <Route path="*" element={<Navigate to="/faculty" replace />} />
           </Routes>
         </div>

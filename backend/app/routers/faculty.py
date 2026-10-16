@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from app.database.connection import get_db
 from app.models.domain import User, FacultyProfile, Department, RoleEnum
@@ -110,6 +110,24 @@ def get_hod_faculty_list(
         except ValueError:
             pass
 
+    # Batch pre-query all offerings for all relevant programmes to eliminate N+1 queries
+    all_needed_prog_ids = set(dept_prog_ids)
+    for p_id in profile_ids:
+        all_needed_prog_ids.update(scopes_by_faculty.get(p_id) or [])
+    
+    contexts_by_prog = defaultdict(set)
+    if target_sem_type_enum and all_needed_prog_ids:
+        all_offs = db.query(CurriculumOffering).filter(
+            CurriculumOffering.programme_id.in_(list(all_needed_prog_ids)),
+            CurriculumOffering.semester_type == target_sem_type_enum,
+            CurriculumOffering.requires_preference == True
+        ).all()
+        for o in all_offs:
+            contexts_by_prog[o.programme_id].add((o.semester, o.programme_id))
+
+    from app.services.faculty_service import FacultyService
+    fs = FacultyService()
+
     for p in profiles:
         subs = subs_by_faculty.get(p.id, [])
         allocs = allocs_by_faculty.get(p.id, [])
@@ -117,16 +135,10 @@ def get_hod_faculty_list(
         pref_status = "Not Submitted"
         
         fac_prog_ids = scopes_by_faculty.get(p.id) or dept_prog_ids
-        # Find applicable (semester, programme) contexts for this faculty that require preference
         applicable_contexts = set()
         if target_sem_type_enum and fac_prog_ids:
-            off_query = db.query(CurriculumOffering).filter(
-                CurriculumOffering.programme_id.in_(fac_prog_ids),
-                CurriculumOffering.semester_type == target_sem_type_enum,
-                CurriculumOffering.requires_preference == True
-            ).all()
-            for o in off_query:
-                applicable_contexts.add((o.semester, o.programme_id))
+            for pid in fac_prog_ids:
+                applicable_contexts.update(contexts_by_prog.get(pid, set()))
         
         submitted_contexts = set()
         for s in subs:
@@ -286,22 +298,35 @@ def get_faculty_detail(
         elif target_st == "EVEN":
             sub_query = sub_query.filter(Semester.semester_number % 2 == 0)
             
-    submissions = sub_query.all()
+    submissions = (
+        sub_query
+        .options(
+            joinedload(PreferenceSubmission.items).joinedload(PreferenceItem.subject)
+        )
+        .all()
+    )
     
+    # Collect all subject IDs across items
+    subject_ids = list(set(item.subject_id for sub in submissions for item in sub.items))
+    offering_map = {}
+    if subject_ids:
+        offs = (
+            db.query(CurriculumOffering)
+            .options(joinedload(CurriculumOffering.programme))
+            .filter(CurriculumOffering.subject_id.in_(subject_ids))
+            .all()
+        )
+        for o in offs:
+            if o.subject_id not in offering_map:
+                offering_map[o.subject_id] = o
+
     prefs = []
     for sub in submissions:
         for item in sub.items:
             subj = item.subject
-            # Get offering info (programme name / class type)
-            offering = db.query(CurriculumOffering).filter(
-                CurriculumOffering.subject_id == subj.id
-            ).first()
-            prog_name = ""
-            semester = 0
-            if offering:
-                prog = db.query(Programme).filter(Programme.id == offering.programme_id).first()
-                prog_name = prog.name if prog else ""
-                semester = offering.semester
+            offering = offering_map.get(subj.id)
+            prog_name = (offering.programme.name if (offering and offering.programme) else "")
+            semester = offering.semester if offering else 0
 
             sem_type = "ODD" if semester % 2 != 0 else "EVEN"
             if offering and getattr(offering, "semester_type", None):
@@ -339,7 +364,13 @@ def get_faculty_detail(
     
     # Get allocations
     allocations = []
-    comp_query = db.query(AllocationComponent).filter(AllocationComponent.faculty_id == faculty_id)
+    comp_query = (
+        db.query(AllocationComponent)
+        .options(
+            joinedload(AllocationComponent.allocation).joinedload(SubjectAllocation.section)
+        )
+        .filter(AllocationComponent.faculty_id == faculty_id)
+    )
     if semester_type:
         target_st = semester_type.upper()
         comp_query = comp_query.join(

@@ -1,6 +1,6 @@
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, Response, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.database.connection import get_db
 from app.models.domain import User, RoleEnum, FacultyProfile, PolicyConfig
 from app.auth.dependencies import require_role, get_current_user
@@ -52,35 +52,48 @@ def get_hod_dashboard_stats(
         scopes_by_fac[sc.faculty_id].append(sc.programme_id)
 
     dept_prog_ids = [p.id for p in progs]
+    all_needed_prog_ids = set(dept_prog_ids)
+    for f_id in all_fac_ids:
+        all_needed_prog_ids.update(scopes_by_fac.get(f_id) or [])
+
+    # Pre-fetch all curriculum offerings for ODD and EVEN across all programmes
+    all_offerings = db.query(CurriculumOffering).filter(
+        CurriculumOffering.programme_id.in_(list(all_needed_prog_ids)),
+        CurriculumOffering.requires_preference == True
+    ).all() if all_needed_prog_ids else []
+
+    contexts_by_prog_semtype = defaultdict(lambda: defaultdict(set))
+    for o in all_offerings:
+        st_val = o.semester_type.value if hasattr(o.semester_type, "value") else str(o.semester_type)
+        contexts_by_prog_semtype[st_val][o.programme_id].add((o.semester, o.programme_id))
+
+    # Pre-fetch all submissions for all department faculty in one query
+    all_submissions = db.query(PreferenceSubmission).filter(
+        PreferenceSubmission.faculty_id.in_(all_fac_ids),
+        PreferenceSubmission.status.in_([PreferenceStatusEnum.SUBMITTED, PreferenceStatusEnum.APPROVED])
+    ).join(AcademicWorkspace, PreferenceSubmission.workspace_id == AcademicWorkspace.id)\
+     .join(Semester, AcademicWorkspace.semester_id == Semester.id).all() if all_fac_ids else []
+
+    sub_contexts_by_faculty_semtype = defaultdict(lambda: defaultdict(set))
+    for s in all_submissions:
+        if s.workspace and s.workspace.semester:
+            sem_num = s.workspace.semester.semester_number
+            sem_st = "ODD" if sem_num % 2 != 0 else "EVEN"
+            sub_contexts_by_faculty_semtype[sem_st][s.faculty_id].add((sem_num, s.workspace.programme_id))
 
     def get_submission_counts(sem_type):
         submitted = 0
         target_st = sem_type.upper()
-        sem_type_enum = SemesterTypeEnum(target_st)
+        prog_contexts = contexts_by_prog_semtype.get(target_st, {})
+        faculty_subs = sub_contexts_by_faculty_semtype.get(target_st, {})
+
         for f in faculties:
-            subs = db.query(PreferenceSubmission).filter(
-                PreferenceSubmission.faculty_id == f.id,
-                PreferenceSubmission.status.in_([PreferenceStatusEnum.SUBMITTED, PreferenceStatusEnum.APPROVED])
-            ).join(AcademicWorkspace, PreferenceSubmission.workspace_id == AcademicWorkspace.id)\
-             .join(Semester, AcademicWorkspace.semester_id == Semester.id)
-
-            if target_st == "ODD":
-                subs = subs.filter(Semester.semester_number % 2 != 0)
-            else:
-                subs = subs.filter(Semester.semester_number % 2 == 0)
-
-            sub_contexts = set((s.workspace.semester.semester_number, s.workspace.programme_id) for s in subs.all() if s.workspace and s.workspace.semester)
+            sub_contexts = faculty_subs.get(f.id, set())
             fac_prog_ids = scopes_by_fac.get(f.id) or dept_prog_ids
 
             app_contexts = set()
-            if fac_prog_ids:
-                offs = db.query(CurriculumOffering).filter(
-                    CurriculumOffering.programme_id.in_(fac_prog_ids),
-                    CurriculumOffering.semester_type == sem_type_enum,
-                    CurriculumOffering.requires_preference == True
-                ).all()
-                for o in offs:
-                    app_contexts.add((o.semester, o.programme_id))
+            for pid in fac_prog_ids:
+                app_contexts.update(prog_contexts.get(pid, set()))
 
             if app_contexts:
                 if app_contexts.issubset(sub_contexts):
@@ -199,36 +212,57 @@ def get_workload_viewer(
     elif target_st == "EVEN":
         query = query.filter(Semester.semester_number % 2 == 0)
         
-    components = query.all()
+    components = (
+        query
+        .options(
+            joinedload(AllocationComponent.allocation).joinedload(SubjectAllocation.subject),
+            joinedload(AllocationComponent.allocation).joinedload(SubjectAllocation.section),
+            joinedload(AllocationComponent.allocation).joinedload(SubjectAllocation.workspace).joinedload(AcademicWorkspace.semester),
+            joinedload(AllocationComponent.faculty)
+        )
+        .all()
+    )
+
+    # Batch query programmes via curriculum offerings
+    subject_ids = list(set(comp.allocation.subject_id for comp in components if comp.allocation))
+    offering_map = {}
+    if subject_ids:
+        offs = (
+            db.query(CurriculumOffering)
+            .options(joinedload(CurriculumOffering.programme))
+            .filter(CurriculumOffering.subject_id.in_(subject_ids))
+            .all()
+        )
+        for o in offs:
+            if o.subject_id not in offering_map and o.programme:
+                offering_map[o.subject_id] = o.programme.name
+
     result = []
-    
+    dept_name = current_user.department.name if current_user.department else ""
+
     for comp in components:
         sa = comp.allocation
-        sec = db.query(Section).filter(Section.id == sa.section_id).first() if sa.section_id else None
-        
-        # Get Programme
-        prog_name = "Unknown Programme"
-        offering = db.query(CurriculumOffering).filter(CurriculumOffering.subject_id == sa.subject_id).first()
-        if offering:
-            prog = db.query(Programme).filter(Programme.id == offering.programme_id).first()
-            if prog:
-                prog_name = prog.name
-                
+        if not sa:
+            continue
+        sec = sa.section
+        prog_name = offering_map.get(sa.subject_id, "Unknown Programme")
+        sem_num = sa.workspace.semester.semester_number if (sa.workspace and sa.workspace.semester) else 0
+
         result.append({
-            "faculty_name": comp.faculty.name,
-            "department": current_user.department.name,
+            "faculty_name": comp.faculty.name if comp.faculty else "",
+            "department": dept_name,
             "programme": prog_name,
-            "subject_code": sa.subject.course_code,
-            "subject_name": sa.subject.course_name,
-            "semester": sa.workspace.semester.semester_number,
+            "subject_code": sa.subject.course_code if sa.subject else "",
+            "subject_name": sa.subject.course_name if sa.subject else "",
+            "semester": sem_num,
             "section": sec.name if sec else "-",
-            "role": comp.role.value,
-            "theory_hours": comp.theory_hours,
-            "lab_hours": comp.practical_hours,
-            "total_hours": comp.theory_hours + comp.practical_hours,
+            "role": comp.role.value if hasattr(comp.role, 'value') else str(comp.role),
+            "theory_hours": comp.theory_hours or 0,
+            "lab_hours": comp.practical_hours or 0,
+            "total_hours": (comp.theory_hours or 0) + (comp.practical_hours or 0),
             "allocation_status": "Allocated"
         })
-        
+
     # Sort by faculty name, then subject
     result.sort(key=lambda x: (x["faculty_name"], x["subject_name"]))
     return result

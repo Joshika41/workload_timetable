@@ -31,7 +31,7 @@ interface AuthContextType {
   session: ERPSession | null;
   isLoading: boolean;
   demoLogin: (params: Record<string, unknown>) => Promise<void>;
-  realLogin: (username: string, password?: string) => Promise<void>;
+  realLogin: (username: string, password?: string, requestedRole?: string) => Promise<void>;
   logOut: () => void;
   updateContext: (ctx: Partial<ERPContext>) => void;
 }
@@ -105,7 +105,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       toast.success(`Welcome, ${newSession.name}!`);
 
-      if (response.role === 'HOD' || response.role === 'ERP_COORDINATOR') {
+      if (response.role === 'MASTER_ADMIN') {
+        navigate('/admin');
+      } else if (response.role === 'HOD' || response.role === 'ERP_COORDINATOR') {
         navigate('/hod');
       } else {
         navigate('/faculty');

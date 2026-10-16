@@ -1,14 +1,25 @@
 import { apiClient } from './client';
 
-// ── Context / Academic
+const workspaceCache: Record<string, { data: any; expiry: number }> = {};
+
 export const academicApi = {
   getInstitutions: () => apiClient.get('/institutions').then(r => r.data),
   getDepartments: () => apiClient.get('/departments').then(r => r.data),
   getProgrammesByDept: (deptId: number) => apiClient.get(`/departments/${deptId}/programmes`).then(r => r.data),
   getSemesters: (programmeId: number, semType: string) =>
     apiClient.get(`/programmes/${programmeId}/semesters`, { params: { sem_type: semType } }).then(r => r.data),
-  getWorkspacesByContext: (programmeId: number, semesterType: string) =>
-    apiClient.get('/workspaces-by-context', { params: { programme_id: programmeId, semester_type: semesterType } }).then(r => r.data),
+  getWorkspacesByContext: (programmeId: number, semesterType: string) => {
+    const cacheKey = `${programmeId}_${semesterType}`;
+    const cached = workspaceCache[cacheKey];
+    if (cached && Date.now() < cached.expiry) {
+      return Promise.resolve(cached.data);
+    }
+    return apiClient.get('/workspaces-by-context', { params: { programme_id: programmeId, semester_type: semesterType } })
+      .then(r => {
+        workspaceCache[cacheKey] = { data: r.data, expiry: Date.now() + 15000 };
+        return r.data;
+      });
+  },
   getWorkspaceStatus: (workspaceId: string) =>
     apiClient.get(`/workspaces/${workspaceId}/workflow-status`).then(r => r.data),
   getSubjects: (workspaceId: string) =>
@@ -18,6 +29,72 @@ export const academicApi = {
   // Faculty list for context selection & HOD pool
   getFacultyList: (departmentId?: number) =>
     apiClient.get('/faculty/list', { params: departmentId ? { department_id: departmentId } : {} }).then(r => r.data),
+
+  // Curriculum Subjects (MCA Syllabus & Department Subject Selection)
+  getCurriculumSubjects: (departmentId?: number, programmeId?: number, semester?: number) => {
+    const params: Record<string, number> = {};
+    if (departmentId !== undefined) params.department_id = departmentId;
+    if (programmeId !== undefined) params.programme_id = programmeId;
+    if (semester !== undefined) params.semester = semester;
+    return apiClient.get('/curriculum-subjects', { params }).then(r => r.data);
+  },
+
+  batchUpdateCurriculumSubjects: (programmeId: number, semester: number, selectedOfferingIds: number[]) =>
+    apiClient.post('/curriculum-subjects/batch-update', {
+      programme_id: programmeId,
+      semester: semester,
+      selected_offering_ids: selectedOfferingIds
+    }).then(r => r.data),
+
+  // Department Infrastructure Capacity (Classrooms & Labs)
+  getDepartmentCapacity: (departmentId: number) =>
+    apiClient.get('/department-capacity', { params: { department_id: departmentId } }).then(r => r.data),
+
+  saveDepartmentCapacity: (payload: {
+    department_id: number;
+    total_classrooms: number;
+    classroom_capacity: number;
+    total_labs: number;
+    lab_capacity: number;
+  }) => apiClient.post('/department-capacity', payload).then(r => r.data),
+
+  // Universal Master Subjects Repository (Super Admin)
+  getMasterSubjects: (params?: { search?: string; category?: string }) =>
+    apiClient.get('/master-subjects', { params }).then(r => r.data),
+
+  createMasterSubject: (data: any) => apiClient.post('/master-subjects', data).then(r => r.data),
+  updateMasterSubject: (id: number, data: any) => apiClient.put(`/master-subjects/${id}`, data).then(r => r.data),
+  deleteMasterSubject: (id: number) => apiClient.delete(`/master-subjects/${id}`).then(r => r.data),
+
+  // Weekly Class Timetable (Excel 2026 Format)
+  getWeeklyTimetable: (programmeId: number, semester: number, section: string = 'A') =>
+    apiClient.get('/timetable/semester-weekly', {
+      params: { programme_id: programmeId, semester, section }
+    }).then(r => r.data),
+
+  generateWeeklyTimetable: (payload: {
+    programme_id: number;
+    semester: number;
+    department_id: number;
+    section?: string;
+    default_room?: string;
+  }) => apiClient.post('/timetable/generate-weekly', payload).then(r => r.data),
+
+  saveWeeklyTimetable: (payload: {
+    programme_id: number;
+    semester: number;
+    department_id: number;
+    section?: string;
+    schedule: any[];
+  }) => apiClient.post('/timetable/save-weekly', payload).then(r => r.data),
+
+  swapTimetableSlots: (payload: {
+    programme_id: number;
+    semester: number;
+    section?: string;
+    slot_a_id: string;
+    slot_b_id: string;
+  }) => apiClient.post('/timetable/swap-slots', payload).then(r => r.data),
 };
 
 export const facultyApi = {

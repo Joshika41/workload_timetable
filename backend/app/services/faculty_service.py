@@ -30,9 +30,13 @@ class FacultyService:
             designation_cap = 16
             
         if key:
-            policy = db.query(PolicyConfig).filter(PolicyConfig.key == key).first()
-            if policy and policy.value and policy.value.isdigit():
-                return int(policy.value)
+            if not hasattr(self, '_policy_cache'):
+                self._policy_cache = {}
+            if key not in self._policy_cache:
+                policy = db.query(PolicyConfig).filter(PolicyConfig.key == key).first()
+                self._policy_cache[key] = int(policy.value) if (policy and policy.value and policy.value.isdigit()) else None
+            if self._policy_cache[key] is not None:
+                return self._policy_cache[key]
                 
         if designation_cap is not None:
             return designation_cap

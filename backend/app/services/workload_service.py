@@ -1,4 +1,5 @@
-from sqlalchemy.orm import Session
+from typing import List, Optional, Dict, Any
+from sqlalchemy.orm import Session, joinedload
 from app.models.domain import (
     User, FacultyProfile, SubjectAllocation, AllocationComponent,
     Section, AllocationRoleEnum, AllocationStatusEnum
@@ -20,9 +21,12 @@ class WorkloadService:
         
         faculty_ids = [f.id for f in faculties]
 
-        # Fetch all components in a single query to prevent N+1 timeout
         comps_query = (
             db.query(AllocationComponent)
+            .options(
+                joinedload(AllocationComponent.allocation).joinedload(SubjectAllocation.subject),
+                joinedload(AllocationComponent.allocation).joinedload(SubjectAllocation.section)
+            )
             .join(SubjectAllocation, SubjectAllocation.id == AllocationComponent.allocation_id)
             .filter(AllocationComponent.faculty_id.in_(faculty_ids))
         )

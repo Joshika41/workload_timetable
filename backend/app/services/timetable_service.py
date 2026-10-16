@@ -1,9 +1,17 @@
 import os
 from sqlalchemy.orm import Session
-from scripts.run_simulation_solve import run_simulation
 from app.models.timetable import TimetableConfiguration, TimetableRun, TimetableStatusEnum, TimetableEntry
 
 def generate_timetable(workspace_id: str, db: Session):
+    try:
+        from scripts.run_simulation_solve import run_simulation
+    except ImportError as e:
+        return {
+            "status": "FAILED",
+            "violations": 0,
+            "version_id": None,
+            "error": f"Timetable solver engine not installed: {e}"
+        }
     db_url = "sqlite:///simulation.db"
     status, violations, version_id = run_simulation(db_url, seed_db=True)
     

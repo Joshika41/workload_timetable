@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 import jwt
 from passlib.context import CryptContext
 
-SECRET_KEY = os.getenv("JWT_SECRET", "super-secret-key-for-phase-a-only")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY") or os.getenv("JWT_SECRET", "super-secret-key-for-phase-a-only")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 1 day
 

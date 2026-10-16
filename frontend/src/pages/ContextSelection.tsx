@@ -13,13 +13,14 @@ export default function ContextSelection() {
   const [isLoadingInst, setIsLoadingInst] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const [selectedRole, setSelectedRole] = useState<'HOD' | 'FACULTY'>('HOD');
+  const [selectedRole, setSelectedRole] = useState<'HOD' | 'FACULTY' | 'SUPER_ADMIN'>('HOD');
   const [selectedInstId, setSelectedInstId] = useState<number | ''>('');
   const [selectedProfileId, setSelectedProfileId] = useState<number | ''>('');
 
   useEffect(() => {
     if (!authLoading && session) {
-      if (session.role === 'HOD' || session.role === 'ERP_COORDINATOR') navigate('/hod');
+      if (session.role === 'MASTER_ADMIN') navigate('/admin');
+      else if (session.role === 'HOD' || session.role === 'ERP_COORDINATOR') navigate('/hod');
       else navigate('/faculty');
     }
   }, [session, authLoading, navigate]);
@@ -33,7 +34,22 @@ export default function ContextSelection() {
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
 
   useEffect(() => {
-    if (selectedInstId && selectedRole) {
+    if (selectedRole === 'SUPER_ADMIN') {
+      setIsLoadingProfiles(true);
+      authApi.getProfiles('SUPER_ADMIN', 1)
+        .then(data => {
+          setProfiles(data);
+          if (data && data.length > 0) {
+            setSelectedProfileId(data[0].user_id);
+          }
+        })
+        .catch(e => {
+          console.error("Failed to load Super Admin profiles:", e);
+          toast.error('Failed to load Super Admin profile.');
+          setProfiles([]);
+        })
+        .finally(() => setIsLoadingProfiles(false));
+    } else if (selectedInstId && selectedRole) {
       setIsLoadingProfiles(true);
       authApi.getProfiles(selectedRole, Number(selectedInstId))
         .then(setProfiles)
@@ -45,8 +61,8 @@ export default function ContextSelection() {
         .finally(() => setIsLoadingProfiles(false));
     } else {
       setProfiles([]);
+      setSelectedProfileId('');
     }
-    setSelectedProfileId('');
   }, [selectedRole, selectedInstId]);
 
   const activeProfile = profiles.find(p => p.user_id === selectedProfileId);
@@ -55,7 +71,7 @@ export default function ContextSelection() {
     if (!activeProfile) return;
     setIsSubmitting(true);
     try {
-      await realLogin(activeProfile.username, '123456', selectedRole);
+      await realLogin(activeProfile.username, '123456', selectedRole === 'SUPER_ADMIN' ? 'MASTER_ADMIN' : selectedRole);
     } catch {
       // Error handled in auth.tsx
     } finally {
@@ -129,70 +145,91 @@ export default function ContextSelection() {
             <label style={{ fontSize: '11px', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px', display: 'block' }}>
               Select Login Role
             </label>
-            <div style={{ display: 'flex', background: '#F8FAFC', borderRadius: '12px', padding: '4px', border: '1px solid #E2E8F0' }}>
-              <button onClick={() => setSelectedRole('HOD')}
+            <div style={{ display: 'flex', background: '#F8FAFC', borderRadius: '12px', padding: '4px', border: '1px solid #E2E8F0', gap: '4px' }}>
+              <button onClick={() => { setSelectedRole('HOD'); setSelectedInstId(''); }}
                 style={{
-                  flex: 1, padding: '12px', borderRadius: '10px',
+                  flex: 1, padding: '12px 8px', borderRadius: '10px',
                   background: selectedRole === 'HOD' ? '#002147' : 'transparent',
                   color: selectedRole === 'HOD' ? 'white' : '#64748B',
-                  fontWeight: 700, fontSize: '14px', transition: 'all 0.2s', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
+                  fontWeight: 700, fontSize: '13px', transition: 'all 0.2s', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
                 }}>
                 <span>👤</span> HOD
               </button>
-              <button onClick={() => setSelectedRole('FACULTY')}
+              <button onClick={() => { setSelectedRole('FACULTY'); setSelectedInstId(''); }}
                 style={{
-                  flex: 1, padding: '12px', borderRadius: '10px',
+                  flex: 1, padding: '12px 8px', borderRadius: '10px',
                   background: selectedRole === 'FACULTY' ? '#002147' : 'transparent',
                   color: selectedRole === 'FACULTY' ? 'white' : '#64748B',
-                  fontWeight: 700, fontSize: '14px', transition: 'all 0.2s', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
+                  fontWeight: 700, fontSize: '13px', transition: 'all 0.2s', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
                 }}>
                 <span>👨‍🏫</span> Faculty
+              </button>
+              <button onClick={() => setSelectedRole('SUPER_ADMIN')}
+                style={{
+                  flex: 1, padding: '12px 8px', borderRadius: '10px',
+                  background: selectedRole === 'SUPER_ADMIN' ? '#002147' : 'transparent',
+                  color: selectedRole === 'SUPER_ADMIN' ? 'white' : '#64748B',
+                  fontWeight: 700, fontSize: '13px', transition: 'all 0.2s', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px'
+                }}>
+                <span>🛡️</span> Super Admin
               </button>
             </div>
           </div>
 
-          {/* Institution Selector */}
-          <div style={{ marginBottom: '24px' }}>
-            <label style={{ fontSize: '11px', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px', display: 'block' }}>
-              Select Group / School
-            </label>
-            {isLoadingInst ? (
-              <div className="skeleton skeleton-text" style={{ height: 46 }} />
-            ) : (
-              <select
-                className="form-control"
-                value={selectedInstId}
-                onChange={e => setSelectedInstId(e.target.value ? Number(e.target.value) : '')}
-                style={{ height: '48px', fontSize: '15px', fontWeight: 600, color: '#0F172A', border: '2px solid #E2E8F0', borderRadius: '10px' }}
-              >
-                <option value="">— Select Institution —</option>
-                {institutions.map(i => (
-                  <option key={i.id} value={i.id}>{i.name}</option>
-                ))}
-              </select>
-            )}
-          </div>
+          {/* Institution Selector (Only for HOD & Faculty) */}
+          {selectedRole !== 'SUPER_ADMIN' ? (
+            <>
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ fontSize: '11px', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px', display: 'block' }}>
+                  Select Group / School
+                </label>
+                {isLoadingInst ? (
+                  <div className="skeleton skeleton-text" style={{ height: 46 }} />
+                ) : (
+                  <select
+                    className="form-control"
+                    value={selectedInstId}
+                    onChange={e => setSelectedInstId(e.target.value ? Number(e.target.value) : '')}
+                    style={{ height: '48px', fontSize: '15px', fontWeight: 600, color: '#0F172A', border: '2px solid #E2E8F0', borderRadius: '10px' }}
+                  >
+                    <option value="">— Select Institution —</option>
+                    {institutions.map(i => (
+                      <option key={i.id} value={i.id}>{i.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
 
-          {/* Profile Selector */}
-          {selectedInstId !== '' && (
-            <div style={{ marginBottom: '32px' }} className="animate-slide-up">
-              <label style={{ fontSize: '11px', fontWeight: 700, color: '#DC2626', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px', display: 'block' }}>
-                Choose Your Profile *
-              </label>
-              <select
-                className="form-control"
-                value={selectedProfileId}
-                onChange={e => setSelectedProfileId(e.target.value ? Number(e.target.value) : '')}
-                style={{ height: '48px', fontSize: '15px', fontWeight: 700, color: '#002147', border: '2px solid #002147', borderRadius: '10px', background: '#F8FAFC' }}
-                disabled={isLoadingProfiles}
-              >
-                <option value="">{isLoadingProfiles ? '— Loading Profiles... —' : '— Select Profile —'}</option>
-                {profiles.map(p => (
-                  <option key={p.user_id} value={p.user_id}>
-                    {p.name} — {p.department} ({p.erp_id})
-                  </option>
-                ))}
-              </select>
+              {/* Profile Selector */}
+              {selectedInstId !== '' && (
+                <div style={{ marginBottom: '32px' }} className="animate-slide-up">
+                  <label style={{ fontSize: '11px', fontWeight: 700, color: '#DC2626', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px', display: 'block' }}>
+                    Choose Your Profile *
+                  </label>
+                  <select
+                    className="form-control"
+                    value={selectedProfileId}
+                    onChange={e => setSelectedProfileId(e.target.value ? Number(e.target.value) : '')}
+                    style={{ height: '48px', fontSize: '15px', fontWeight: 700, color: '#002147', border: '2px solid #002147', borderRadius: '10px', background: '#F8FAFC' }}
+                    disabled={isLoadingProfiles}
+                  >
+                    <option value="">{isLoadingProfiles ? '— Loading Profiles... —' : '— Select Profile —'}</option>
+                    {profiles.map(p => (
+                      <option key={p.user_id} value={p.user_id}>
+                        {p.name} — {p.department} ({p.erp_id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ marginBottom: '24px', padding: '12px 16px', background: 'rgba(201,168,76,0.12)', border: '1px solid rgba(201,168,76,0.3)', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '20px' }}>🏛️</span>
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: '#002147' }}>Universal Master Administrator Scope</div>
+                <div style={{ fontSize: '11px', color: '#64748B' }}>Full campus management & master subject catalog permissions across all departments.</div>
+              </div>
             </div>
           )}
 

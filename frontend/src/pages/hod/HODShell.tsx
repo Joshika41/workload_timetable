@@ -7,9 +7,11 @@ import WorkloadViewer from './WorkloadViewer';
 import ClassMatrixViewer from './ClassMatrixViewer';
 import HODSettings from './HODSettings';
 import FacultyDetail from './FacultyDetail';
+import HODSubjects from './HODSubjects';
 
 const STATIC_NAV_ITEMS = [
   { to: '/hod', label: 'Faculty List', icon: '👥', exact: true },
+  { to: '/hod/subjects', label: 'Subjects', icon: '📚', exact: false },
   { to: '/hod/viewer', label: 'Workload Viewer', icon: '👁️', exact: false },
   { to: '/hod/classmatrix', label: 'Class-wise Matrix', icon: '📋', exact: false },
   { to: '/hod/settings', label: 'Settings', icon: '⚙️', exact: false },
@@ -150,6 +152,7 @@ export default function HODShell() {
         <div className="erp-content">
           <Routes>
             <Route path="/" element={<HODHome />} />
+            <Route path="/subjects" element={<HODSubjects />} />
             <Route path="/faculty/:facultyId" element={<FacultyDetail />} />
             <Route path="/viewer" element={<WorkloadViewer />} />
             <Route path="/classmatrix" element={<ClassMatrixViewer />} />

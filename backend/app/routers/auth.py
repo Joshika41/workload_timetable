@@ -131,16 +131,21 @@ def demo_login(req: DemoLoginRequest, db: Session = Depends(get_db)):
 @router.get("/profiles")
 def get_profiles(role: str, institution_id: int, db: Session = Depends(get_db)):
     """Returns users matching the role and institution."""
-    try:
-        req_role = RoleEnum(role)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid role")
+    if role in ("SUPER_ADMIN", "MASTER_ADMIN"):
+        req_role = RoleEnum.MASTER_ADMIN
+    else:
+        try:
+            req_role = RoleEnum(role)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid role")
         
     query = db.query(User, FacultyProfile, Department)\
         .outerjoin(FacultyProfile, FacultyProfile.user_id == User.id)\
         .outerjoin(Department, User.department_id == Department.id)
     
-    if req_role == RoleEnum.HOD:
+    if req_role == RoleEnum.MASTER_ADMIN:
+        query = query.filter(User.role == RoleEnum.MASTER_ADMIN)
+    elif req_role == RoleEnum.HOD:
         from sqlalchemy import or_
         query = query.filter(
             or_(
@@ -149,11 +154,12 @@ def get_profiles(role: str, institution_id: int, db: Session = Depends(get_db)):
                 FacultyProfile.designation.ilike('%Head%')
             )
         )
+        query = query.filter(Department.institution_id == institution_id)
     else:
         from sqlalchemy import or_
         query = query.filter(or_(User.role == req_role, User.role == RoleEnum.HOD))
+        query = query.filter(Department.institution_id == institution_id)
         
-    query = query.filter(Department.institution_id == institution_id)
     results = query.all()
     
     profiles = []

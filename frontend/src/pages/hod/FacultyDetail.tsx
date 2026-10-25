@@ -112,7 +112,26 @@ export default function FacultyDetailModal({
               is_allocated: existingAlloc.approval === 'APPROVED'
             };
           } else {
-            // Note: If faculty is allocated to a subject they didn't prefer, we would ideally need more info from existingAlloc to construct the row, but typically they only allocate preferred subjects in this UI currently.
+            // Include allocated subjects even if faculty did not submit preference for them (e.g. administrative assignments or guest faculty)
+            initAlloc.push({
+              preference_item_id: 0,
+              subject_id: existingAlloc.subject_id,
+              subject_name: existingAlloc.subject_name || `Subject #${existingAlloc.subject_id}`,
+              subject_code: existingAlloc.subject_code || '',
+              course_type: existingAlloc.course_type || 'CORE',
+              class_type: existingAlloc.class_type || '',
+              semester: existingAlloc.semester || 1,
+              preference_status: 'APPROVED',
+              is_allocated: true,
+              section: existingAlloc.section || 'A',
+              valid_sections: [existingAlloc.section || 'A', 'B'],
+              role: existingAlloc.role || 'Incharge-1',
+              theory_hours: existingAlloc.theory_hours || 0,
+              lab_hours: existingAlloc.lab_hours || 0,
+              total_hours: existingAlloc.total_hours || (existingAlloc.theory_hours + existingAlloc.lab_hours),
+              max_theory_hours: existingAlloc.max_theory_hours || existingAlloc.theory_hours || 0,
+              max_lab_hours: existingAlloc.max_lab_hours || existingAlloc.lab_hours || 0,
+            });
           }
         }
       }
@@ -172,7 +191,7 @@ export default function FacultyDetailModal({
         })),
       });
       toast.success('Allocations saved successfully.');
-      await loadFaculty();
+      await loadData();
       onAllocationSaved?.();
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Failed to save allocations.');

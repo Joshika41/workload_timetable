@@ -367,7 +367,8 @@ def get_faculty_detail(
     comp_query = (
         db.query(AllocationComponent)
         .options(
-            joinedload(AllocationComponent.allocation).joinedload(SubjectAllocation.section)
+            joinedload(AllocationComponent.allocation).joinedload(SubjectAllocation.section),
+            joinedload(AllocationComponent.allocation).joinedload(SubjectAllocation.subject)
         )
         .filter(AllocationComponent.faculty_id == faculty_id)
     )
@@ -389,13 +390,19 @@ def get_faculty_detail(
     for comp in components:
         sa = comp.allocation
         if not sa: continue
+        subj = sa.subject
         allocations.append({
             "subject_id": sa.subject_id,
+            "subject_name": subj.course_name if subj else "",
+            "subject_code": subj.course_code if subj else "",
+            "course_type": subj.category if subj else "CORE",
             "section": sa.section.name if sa.section else "",
             "role": comp.role.value,
             "theory_hours": comp.theory_hours,
             "lab_hours": comp.practical_hours,
             "total_hours": comp.theory_hours + comp.practical_hours,
+            "max_theory_hours": subj.theory_hours if subj else comp.theory_hours,
+            "max_lab_hours": subj.practical_hours if subj else comp.practical_hours,
             "approval": "APPROVED"
         })
             
@@ -479,7 +486,7 @@ def save_faculty_allocations(
             if offering:
                 ws = db.query(AcademicWorkspace).filter(
                     AcademicWorkspace.programme_id == offering.programme_id,
-                    AcademicWorkspace.academic_year_id == offering.academic_year_id
+                    AcademicWorkspace.semester_id == offering.semester
                 ).first()
                 if ws:
                     workspace_id = ws.id

@@ -159,7 +159,9 @@ export default function HODHome() {
           <div className="card" style={{ padding: '20px' }}>
             <div style={{ fontSize: '13px', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>Allocation Progress</div>
             <div style={{ fontSize: '28px', fontWeight: 800, color: '#16A34A', marginTop: '8px' }}>{stats.allocation_progress}</div>
-            <div style={{ fontSize: '12px', color: '#64748B', marginTop: '4px' }}>{stats.faculty_with_teaching} allocated / {stats.faculty_no_teaching} unallocated</div>
+            <div style={{ fontSize: '12px', color: '#64748B', marginTop: '4px' }}>
+              {stats.fully_allocated !== undefined ? `${stats.fully_allocated} fully · ${stats.partially_allocated} partial · ${stats.unallocated} unallocated` : `${stats.faculty_with_teaching} allocated / ${stats.faculty_no_teaching} unallocated`}
+            </div>
           </div>
           <div className="card" style={{ padding: '20px' }}>
             <div style={{ fontSize: '13px', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>Submitted ({ctx.semesterType})</div>
@@ -181,10 +183,14 @@ export default function HODHome() {
             <div>
               <div style={{ fontSize: '13px', color: '#64748B', fontWeight: 600, textTransform: 'uppercase' }}>Completion</div>
               <div style={{ fontSize: '12px', color: '#64748B', marginTop: '4px' }}>
-                {stats.faculty_with_teaching} out of {stats.faculty_count} allocated
+                {stats.fully_allocated !== undefined ? stats.fully_allocated : stats.faculty_with_teaching} of {stats.faculty_count} fully allocated
               </div>
             </div>
-            <ProgressSphere percent={stats.faculty_count > 0 ? Math.round((stats.faculty_with_teaching / stats.faculty_count) * 100) : 0} size={64} strokeWidth={6} />
+            <ProgressSphere 
+              percent={stats.faculty_count > 0 ? Math.round(((stats.fully_allocated !== undefined ? stats.fully_allocated : stats.faculty_with_teaching) / stats.faculty_count) * 100) : 0} 
+              size={64} 
+              strokeWidth={6} 
+            />
           </div>
         </div>
       )}

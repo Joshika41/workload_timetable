@@ -27,8 +27,8 @@ def get_faculty_workload(
 
 @router.get("/dashboard")
 def get_hod_dashboard_stats(
-    workspace_id: Optional[str] = Query(None),
-    semester_type: Optional[str] = Query(None),
+    workspace_id: Optional[str] = None,
+    semester_type: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role([RoleEnum.HOD.value, RoleEnum.ERP_COORDINATOR.value]))
 ):
@@ -107,7 +107,7 @@ def get_hod_dashboard_stats(
     even_stats = get_submission_counts("EVEN")
     
     # 4. Finalization status
-    if workspace_id:
+    if workspace_id and isinstance(workspace_id, str):
         ws = db.query(AcademicWorkspace).filter(AcademicWorkspace.id == workspace_id).first()
         finalization_status = ws.workflow_state.value if ws else "UNKNOWN"
     else:
@@ -122,32 +122,44 @@ def get_hod_dashboard_stats(
     # 5. ALLOCATION Progress (Actual Workload Metric)
     active_st = semester_type.upper() if semester_type else "ODD"
     
-    # Count distinct faculty who have at least one allocation in the current semester context
-    allocated_query = db.query(AllocationComponent.faculty_id).join(
-        SubjectAllocation, AllocationComponent.allocation_id == SubjectAllocation.id
-    ).join(
-        AcademicWorkspace, SubjectAllocation.workspace_id == AcademicWorkspace.id
-    ).join(
-        Semester, AcademicWorkspace.semester_id == Semester.id
-    ).join(
-        FacultyProfile, AllocationComponent.faculty_id == FacultyProfile.id
-    ).join(
-        User, FacultyProfile.user_id == User.id
-    ).filter(
-        User.department_id == current_user.department_id
-    )
+    # Calculate per-faculty actual workload against target cap
+    from app.services.faculty_service import FacultyService
+    fs = FacultyService()
     
-    if active_st == "ODD":
-        allocated_query = allocated_query.filter(Semester.semester_number % 2 != 0)
-    else:
-        allocated_query = allocated_query.filter(Semester.semester_number % 2 == 0)
+    fully_allocated = 0
+    partially_allocated = 0
+    unallocated = 0
+    
+    for p in faculties:
+        allocs = db.query(AllocationComponent).join(
+            SubjectAllocation, AllocationComponent.allocation_id == SubjectAllocation.id
+        ).join(
+            AcademicWorkspace, SubjectAllocation.workspace_id == AcademicWorkspace.id
+        ).join(
+            Semester, AcademicWorkspace.semester_id == Semester.id
+        ).filter(
+            AllocationComponent.faculty_id == p.id
+        )
+        if active_st == "ODD":
+            allocs = allocs.filter(Semester.semester_number % 2 != 0)
+        else:
+            allocs = allocs.filter(Semester.semester_number % 2 == 0)
+            
+        alloc_list = allocs.all()
+        total_hrs = sum((c.theory_hours or 0) + (c.practical_hours or 0) for c in alloc_list)
+        cap = fs.get_faculty_target_workload(db, p)
         
-    allocated_faculty = allocated_query.distinct().count()
-    
-    faculty_with_teaching = allocated_faculty
-    faculty_no_teaching = total_faculty - faculty_with_teaching
+        if total_hrs >= cap and cap > 0:
+            fully_allocated += 1
+        elif total_hrs > 0:
+            partially_allocated += 1
+        else:
+            unallocated += 1
+
+    faculty_with_teaching = fully_allocated + partially_allocated
+    faculty_no_teaching = unallocated
     allocation_progress = f"{faculty_with_teaching}/{total_faculty}"
-    reconciliation_status = "IN_PROGRESS"
+    reconciliation_status = "FINALIZED" if finalization_status == "FINALIZED" else "IN_PROGRESS"
     
     return {
         "faculty_count": total_faculty,
@@ -156,6 +168,9 @@ def get_hod_dashboard_stats(
         "even_stats": even_stats,
         "faculty_with_teaching": faculty_with_teaching,
         "faculty_no_teaching": faculty_no_teaching,
+        "fully_allocated": fully_allocated,
+        "partially_allocated": partially_allocated,
+        "unallocated": unallocated,
         "allocation_progress": allocation_progress,
         "reconciliation_status": reconciliation_status,
         "finalization_status": finalization_status
@@ -306,6 +321,7 @@ def update_workload_caps(
             db.add(new_cap)
     return {"message": "Caps updated successfully"}
 
+@router.post("/finalize")
 @router.post("/finalize/department")
 def finalize_department_workload(
     workspace_id: str = None,
@@ -386,10 +402,12 @@ def finalize_department_workload(
                 db.rollback()
                 raise HTTPException(status_code=400, detail=f"Cannot finalize: Subject ID {subj} is not fully reconciled (Status: {recon['status']}).")
                 
-    # 3. Fetch Faculty Profiles to enforce Hour Caps
+    # 3. Enforce Hour Caps & Full-Allocation Completeness
     from app.services.faculty_service import FacultyService
+    from app.models.domain import FacultyCycleState
     faculty_service = FacultyService()
     
+    # Check bounds on allocated faculty
     for fac_id, total_hours in faculty_hours.items():
         fp = db.query(FacultyProfile).filter(FacultyProfile.id == fac_id).first()
         if not fp:
@@ -404,6 +422,32 @@ def finalize_department_workload(
                 status_code=400, 
                 detail=f"Cannot finalize: Faculty {fp.name} ({fp.erp_id}) workload cap exceeded. Allocated: {total_hours} hrs, Cap: {fac_cap} hrs."
             )
+
+    # Strictly enforce that ALL department faculty are fully allocated or granted No Teaching
+    dept_faculties = db.query(FacultyProfile).join(User, FacultyProfile.user_id == User.id)\
+        .filter(User.department_id == current_user.department_id).all()
+        
+    incomplete_faculty = []
+    for fp in dept_faculties:
+        tot_hrs = faculty_hours.get(fp.id, 0)
+        cap = faculty_service.get_faculty_target_workload(db, fp)
+        
+        # Check cycle state
+        c_state = db.query(FacultyCycleState).filter(
+            FacultyCycleState.faculty_id == fp.id,
+            FacultyCycleState.workspace_id.in_(workspace_ids)
+        ).first()
+        is_no_teaching = (c_state and c_state.state == "NO_TEACHING")
+        
+        if not is_no_teaching and tot_hrs < cap:
+            incomplete_faculty.append(f"{fp.name} ({tot_hrs}/{cap} hrs allocated)")
+            
+    if incomplete_faculty:
+        db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot finalize: Every faculty member must be fully allocated to their target workload cap or marked 'No Teaching'. Incomplete: {', '.join(incomplete_faculty[:5])}{' and others' if len(incomplete_faculty) > 5 else ''}."
+        )
             
     # 4. If all validations pass, snapshot and transition states securely
     for ws in workspaces:

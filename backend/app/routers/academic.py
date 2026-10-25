@@ -6,7 +6,7 @@ from app.database.connection import get_db
 from app.models.domain import (
     Department, Programme, AcademicYear, CurriculumOffering, Section,
     User, AcademicWorkspace, WorkspaceWorkflowStateEnum, FacultyProfile,
-    Institution, RoleEnum, Subject, PolicyConfig, SemesterTypeEnum
+    Institution, RoleEnum, Subject, PolicyConfig, SemesterTypeEnum, Semester
 )
 from app.models.timetable import TimetableRoom
 from app.auth.dependencies import get_current_user, require_role
@@ -268,7 +268,7 @@ def get_workspaces_by_context(
             "sections": section_list,
         })
     
-    result.sort(key=lambda x: x["semester"])
+    result.sort(key=lambda x: (x["programme_id"], x["programme_year"], x["semester"]))
     return result
 
 @router.get("/subjects")
@@ -530,6 +530,22 @@ def get_curriculum_subjects(
     subjects_data.sort(key=lambda x: (x["semester"], CATEGORY_ORDER.get(x["category_key"], 99), x["course_code"]))
 
     dept_name = target_prog.department.name if target_prog.department else ""
+
+    # Query active sections for this programme and semester
+    active_sections = []
+    if semester is not None:
+        ws_match = db.query(AcademicWorkspace).join(Semester, AcademicWorkspace.semester_id == Semester.id).filter(
+            AcademicWorkspace.programme_id == target_prog.id,
+            Semester.semester_number == semester
+        ).first()
+        if ws_match:
+            sec_objs = db.query(Section).filter(Section.workspace_id == ws_match.id).order_by(Section.name).all()
+            active_sections = [s.name for s in sec_objs]
+    
+    if not active_sections:
+        # Fallback to defaults if no workspace sections exist yet
+        active_sections = ["A", "B", "C", "D"] if (target_prog.id == 1 and semester in [3, 4, 5, 6]) else ["A", "B"]
+
     return {
         "programme_id": target_prog.id,
         "programme_name": target_prog.name,
@@ -537,6 +553,7 @@ def get_curriculum_subjects(
         "department_name": dept_name,
         "programme_type": target_prog.programme_type,
         "semesters": available_sems,
+        "sections": active_sections,
         "subjects": subjects_data
     }
 
@@ -630,47 +647,6 @@ def save_department_capacity(
     else:
         config.value = json.dumps(value_data)
         
-    # Get institution_id from department
-    dept = db.query(Department).filter(Department.id == req.department_id).first()
-    inst_id = dept.institution_id if dept else 1
-
-    # Sync into TimetableRoom records for timetable generation
-    # Classrooms
-    for c_idx in range(1, req.total_classrooms + 1):
-        code = f"D{req.department_id}-CR{c_idx}"
-        room = db.query(TimetableRoom).filter(TimetableRoom.room_code == code).first()
-        if not room:
-            room = TimetableRoom(
-                institution_id=inst_id,
-                room_code=code,
-                room_name=f"Lecture Classroom {c_idx}",
-                room_type="CLASSROOM",
-                capacity=req.classroom_capacity,
-                active=True
-            )
-            db.add(room)
-        else:
-            room.capacity = req.classroom_capacity
-            room.active = True
-            
-    # Laboratories
-    for l_idx in range(1, req.total_labs + 1):
-        code = f"D{req.department_id}-LAB{l_idx}"
-        room = db.query(TimetableRoom).filter(TimetableRoom.room_code == code).first()
-        if not room:
-            room = TimetableRoom(
-                institution_id=inst_id,
-                room_code=code,
-                room_name=f"Computer Lab {l_idx}",
-                room_type="LAB",
-                capacity=req.lab_capacity,
-                active=True
-            )
-            db.add(room)
-        else:
-            room.capacity = req.lab_capacity
-            room.active = True
-
     db.commit()
     return {
         "success": True,
@@ -849,27 +825,99 @@ def get_semester_weekly_timetable(
     """
     Returns the weekly timetable schedule for a programme, semester, and section.
     """
-    key = f"timetable_weekly_{programme_id}_sem_{semester}_{section}"
-    config = db.query(PolicyConfig).filter(PolicyConfig.key == key).first()
+    # 1. Prioritize canonical published TimetableVersion & TimetableEntries
+    from app.models.timetable import TimetableVersion, TimetableEntry, TeachingSession, TimetableRoom
+    from app.models.domain import AcademicWorkspace, Section, SubjectAllocation, Subject, FacultyProfile
     
-    if config:
-        try:
-            data = json.loads(config.value)
-            return {
-                "exists": True,
-                "programme_id": programme_id,
-                "semester": semester,
-                "section": section,
-                "schedule": data.get("schedule", []),
-                "days": data.get("days", WEEK_DAYS[:5]),
-                "periods": PERIOD_TIMINGS,
-                "created_at": data.get("created_at")
-            }
-        except Exception:
-            pass
+    ws = db.query(AcademicWorkspace).filter(
+        AcademicWorkspace.programme_id == programme_id,
+        AcademicWorkspace.semester_id == semester
+    ).first()
+    
+    if ws:
+        sec_obj = db.query(Section).filter(
+            Section.workspace_id == ws.id,
+            Section.name == section
+        ).first()
+        
+        # Look for published or validated draft timetable version for this workspace
+        from app.models.timetable import TimetableVersionStatusEnum, TimetableRun, TimetableConfiguration
+        cfg = db.query(TimetableConfiguration).filter(TimetableConfiguration.workspace_id == ws.id).first()
+        tv = None
+        if cfg:
+            tv = (
+                db.query(TimetableVersion)
+                .join(TimetableRun, TimetableVersion.run_id == TimetableRun.id)
+                .filter(TimetableRun.configuration_id == cfg.id)
+                .order_by(
+                    # Prioritize PUBLISHED over DRAFT
+                    (TimetableVersion.status == TimetableVersionStatusEnum.PUBLISHED).desc(),
+                    TimetableVersion.id.desc()
+                )
+                .first()
+            )
+        
+        if tv and sec_obj:
+            entries = (
+                db.query(TimetableEntry)
+                .filter(
+                    TimetableEntry.timetable_version_id == tv.id,
+                    TimetableEntry.section_id == sec_obj.id
+                )
+                .all()
+            )
             
+            if entries:
+                day_names = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
+                canonical_schedule = []
+                for e in entries:
+                    room = db.query(TimetableRoom).filter(TimetableRoom.id == e.room_id).first()
+                    fac = db.query(FacultyProfile).filter(FacultyProfile.id == e.faculty_id).first()
+                    ts = db.query(TeachingSession).filter(TeachingSession.id == e.teaching_session_id).first()
+                    sa = db.query(SubjectAllocation).filter(SubjectAllocation.id == ts.allocation_id).first() if ts else None
+                    sub = db.query(Subject).filter(Subject.id == sa.subject_id).first() if sa else None
+                    
+                    d_name = day_names[e.day_index] if 0 <= e.day_index < len(day_names) else "MONDAY"
+                    # Handle multi-period duration if needed
+                    for dur_offset in range(e.duration_in_periods or 1):
+                        p_num = e.start_period + dur_offset
+                        timing_str = PERIOD_TIMINGS[p_num - 1]["time"] if 1 <= p_num <= len(PERIOD_TIMINGS) else ""
+                        cat_key, cat_label, c_type = categorize_srm_course(sub.course_code if sub else "", sub.category if sub else "CORE")
+                        canonical_schedule.append({
+                            "id": f"canon_{e.id}_{dur_offset}",
+                            "day": d_name,
+                            "period": p_num,
+                            "time": timing_str,
+                            "course_code": sub.course_code if sub else "",
+                            "course_name": sub.course_name if sub else "",
+                            "course_short": sub.course_name[:20] if sub else "",
+                            "category": cat_key,
+                            "course_type": c_type,
+                            "room": room.room_code or room.room_name if room else "",
+                            "faculty_name": fac.name if fac else "",
+                            "shift": "SH 1",
+                            "section": section,
+                            "is_lab": (e.session_type and "LAB" in str(e.session_type).upper()) or ("Lab" in (room.room_name if room else ""))
+                        })
+                
+                return {
+                    "exists": True,
+                    "is_canonical": True,
+                    "version_id": tv.id,
+                    "version_status": tv.status.value if hasattr(tv.status, 'value') else str(tv.status),
+                    "programme_id": programme_id,
+                    "semester": semester,
+                    "section": section,
+                    "schedule": canonical_schedule,
+                    "days": WEEK_DAYS[:5],
+                    "periods": PERIOD_TIMINGS,
+                    "created_at": tv.created_at.isoformat() if hasattr(tv, 'created_at') and tv.created_at else None
+                }
+
+    # Strict: No mock PolicyConfig fallback. If KAIROS has not generated for this workspace, return empty schedule.
     return {
         "exists": False,
+        "is_canonical": True,
         "programme_id": programme_id,
         "semester": semester,
         "section": section,
@@ -884,32 +932,38 @@ def generate_weekly_timetable(
     db: Session = Depends(get_db)
 ):
     """
-    Creates/generates a weekly timetable based on active curriculum subjects for this semester,
-    matching the format of the official SRM Daily TIME TABLE Excel sheet.
-    Uses 'Room 1' by default (or 'Lab 1' for practicals).
+    Authoritative single-generator entry point.
+    Delegates strictly to KAIROS CP-SAT through the canonical workspace for this programme/semester/section.
     """
+    from app.services.timetable_service import generate_timetable
+    from app.models.domain import AcademicWorkspace, Semester
+
+    # Locate canonical workspace
+    sem_obj = db.query(Semester).filter(Semester.semester_number == req.semester).first()
+    sem_id = sem_obj.id if sem_obj else req.semester
+
+    workspace = db.query(AcademicWorkspace).filter(
+        AcademicWorkspace.programme_id == req.programme_id,
+        (AcademicWorkspace.semester_id == sem_id) | (AcademicWorkspace.programme_year == ((req.semester + 1) // 2))
+    ).first()
+
+    if workspace:
+        try:
+            res = generate_timetable(workspace.id, db)
+            return {
+                "success": True,
+                "message": f"Successfully generated conflict-free timetable using KAIROS CP-SAT for {workspace.id}",
+                "workspace_id": workspace.id,
+                "details": res
+            }
+        except Exception as e:
+            # If workspace is not yet finalized, provide clear feedback
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot generate timetable: {str(e)}"
+            )
+
     # 1. Fetch active offerings
-    offerings = db.query(CurriculumOffering).filter(
-        CurriculumOffering.programme_id == req.programme_id,
-        CurriculumOffering.semester == req.semester,
-        CurriculumOffering.requires_preference == True
-    ).all()
-
-    if not offerings:
-        # Fallback to all offerings for this semester
-        offerings = db.query(CurriculumOffering).filter(
-            CurriculumOffering.programme_id == req.programme_id,
-            CurriculumOffering.semester == req.semester
-        ).all()
-
-    # 2. Fetch department faculty
-    faculty_list = db.query(FacultyProfile).join(User, FacultyProfile.user_id == User.id)\
-        .filter(User.department_id == req.department_id).all()
-        
-    faculty_names = [f.name for f in faculty_list] if faculty_list else ["Dr K Kalaiselvi"]
-    # Ensure Dr K Kalaiselvi is prioritized
-    if "Dr K Kalaiselvi" not in faculty_names:
-        faculty_names.insert(0, "Dr K Kalaiselvi")
 
     # 3. Build syllabus subject pool with target weekly hours
     subject_pool = []
@@ -1141,7 +1195,61 @@ def swap_timetable_slots(
             
         slot_a = schedule[idx_a]
         slot_b = schedule[idx_b]
-        
+
+        # Conflict check: ensure neither faculty nor room is already booked at the target slot in another class
+        day_a, period_a = slot_a.get("day"), slot_a.get("period")
+        day_b, period_b = slot_b.get("day"), slot_b.get("period")
+
+        fac_a = slot_a.get("faculty_name")
+        fac_b = slot_b.get("faculty_name")
+        room_a = slot_a.get("room")
+        room_b = slot_b.get("room")
+
+        # Check cross-class collisions in all existing schedules
+        other_configs = db.query(PolicyConfig).filter(
+            PolicyConfig.key.like("timetable_weekly_%"),
+            PolicyConfig.key != key
+        ).all()
+
+        for oc in other_configs:
+            try:
+                oc_data = json.loads(oc.value)
+                for other_slot in oc_data.get("schedule", []):
+                    o_day = other_slot.get("day")
+                    o_period = other_slot.get("period")
+                    o_fac = other_slot.get("faculty_name")
+                    o_room = other_slot.get("room")
+
+                    # If slot_a moving to (day_b, period_b) causes conflict:
+                    if o_day == day_b and o_period == period_b:
+                        if fac_a and o_fac and fac_a.strip().lower() == o_fac.strip().lower():
+                            raise HTTPException(
+                                status_code=409,
+                                detail=f"Conflict detected: Faculty {fac_a} is already assigned to teach another class on {day_b} Period {period_b}."
+                            )
+                        if room_a and o_room and room_a.strip().lower() == o_room.strip().lower():
+                            raise HTTPException(
+                                status_code=409,
+                                detail=f"Conflict detected: Room {room_a} is already occupied by another class on {day_b} Period {period_b}."
+                            )
+
+                    # If slot_b moving to (day_a, period_a) causes conflict:
+                    if o_day == day_a and o_period == period_a:
+                        if fac_b and o_fac and fac_b.strip().lower() == o_fac.strip().lower():
+                            raise HTTPException(
+                                status_code=409,
+                                detail=f"Conflict detected: Faculty {fac_b} is already assigned to teach another class on {day_a} Period {period_a}."
+                            )
+                        if room_b and o_room and room_b.strip().lower() == o_room.strip().lower():
+                            raise HTTPException(
+                                status_code=409,
+                                detail=f"Conflict detected: Room {room_b} is already occupied by another class on {day_a} Period {period_a}."
+                            )
+            except HTTPException:
+                raise
+            except Exception:
+                continue
+
         # Swap subject, course_name, faculty, room, is_lab
         fields_to_swap = ["course_code", "course_name", "course_short", "category", "course_type", "room", "faculty_name", "is_lab"]
         for f in fields_to_swap:
@@ -1153,9 +1261,11 @@ def swap_timetable_slots(
         
         return {
             "success": True,
-            "message": f"Successfully swapped classes between {slot_a.get('day')} Period {slot_a.get('period')} and {slot_b.get('day')} Period {slot_b.get('period')}",
+            "message": f"Successfully swapped classes between {slot_a.get('day')} Period {slot_a.get('period')} and {slot_b.get('day')} Period {slot_b.get('period')} without conflicts.",
             "schedule": schedule
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

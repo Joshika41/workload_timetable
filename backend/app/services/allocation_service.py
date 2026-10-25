@@ -57,8 +57,10 @@ class AllocationService:
         if allocated_theory > subject.theory_hours or allocated_practical > subject.practical_hours:
             raise HTTPException(status_code=400, detail="HOURS_EXCEED_REQUIREMENT")
             
-        if len(req.components) > 1:
-            raise HTTPException(status_code=400, detail="Only one faculty member may be allocated to a subject in a section.")
+        # Validate no duplicate faculty assigned to the same section allocation
+        assigned_faculties = [c.faculty_id for c in req.components]
+        if len(assigned_faculties) != len(set(assigned_faculties)):
+            raise HTTPException(status_code=400, detail="DUPLICATE_FACULTY_IN_ALLOCATION")
             
         status = AllocationStatusEnum.UNALLOCATED
         if allocated_theory == 0 and allocated_practical == 0:
@@ -83,10 +85,14 @@ class AllocationService:
             db.flush()
             
         for c in req.components:
+            role_val = c.role.replace('_', '-').title() if 'INCHARGE' in c.role.upper() else c.role
             try:
-                role_enum = AllocationRoleEnum(c.role)
+                role_enum = AllocationRoleEnum(role_val)
             except ValueError:
-                raise HTTPException(status_code=400, detail="INVALID_ROLE")
+                try:
+                    role_enum = AllocationRoleEnum(c.role)
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="INVALID_ROLE")
                 
             fac = db.query(FacultyProfile).filter(FacultyProfile.id == c.faculty_id).first()
             if not fac:

@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { timetableApi, IS_DEMO_MODE } from '@/api/timetable';
+import { academicApi } from '@/api/index';
 import { TimetableEntry, CourseReferenceItem, TimetableVersionInfo } from '@/types/timetable';
 import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
+import { exportTimetableToPdf } from '@/lib/timetablePdfExport';
 
 interface HODTimetableProps {
   workspaceId: string;
@@ -26,7 +28,7 @@ const PERIOD_COLUMNS = [
   { num: 6, label: 'Period 6', time: '12:00 - 12:45' },
 ];
 
-export default function HODTimetable({ workspaceId }: HODTimetableProps) {
+export default function HODTimetable({ workspaceId: initialWorkspaceId }: HODTimetableProps) {
   const { session } = useAuth();
   const ctx = session?.context;
 
@@ -34,6 +36,8 @@ export default function HODTimetable({ workspaceId }: HODTimetableProps) {
   const [semesterType, setSemesterType] = useState<'ODD' | 'EVEN'>(
     (ctx?.semesterType as 'ODD' | 'EVEN') || 'ODD'
   );
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string>(initialWorkspaceId);
+  const [availableWorkspaces, setAvailableWorkspaces] = useState<any[]>([]);
   const [selectedSection, setSelectedSection] = useState<string>('All');
   const [selectedVersionId, setSelectedVersionId] = useState<number | undefined>(undefined);
 
@@ -47,17 +51,35 @@ export default function HODTimetable({ workspaceId }: HODTimetableProps) {
   // Action states
   const [generating, setGenerating] = useState(false);
   const [publishing, setPublishing] = useState(false);
-  const [demoBannerDismissed, setDemoBannerDismissed] = useState(false);
 
   // Available sections in fixture
   const availableSections = ['All', 'Section A', 'Section B'];
 
+  // Load all department workspaces for active semester type
+  useEffect(() => {
+    if (session?.context?.semesterType) {
+      academicApi.getWorkspacesByContext(0, semesterType)
+        .then(wsList => {
+          if (wsList && wsList.length > 0) {
+            setAvailableWorkspaces(wsList);
+            // Default to matching semester if available, else first
+            const match = wsList.find((w: any) => w.workspace_id === activeWorkspaceId);
+            if (!match) {
+              setActiveWorkspaceId(wsList[0].workspace_id);
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }, [semesterType, session?.context?.semesterType]);
+
   const loadTimetableData = async (targetVersionId?: number) => {
+    if (!activeWorkspaceId) return;
     setLoading(true);
     try {
       const [versionsData, ttData] = await Promise.all([
-        timetableApi.getVersions(workspaceId),
-        timetableApi.getTimetable(workspaceId, targetVersionId, {
+        timetableApi.getVersions(activeWorkspaceId),
+        timetableApi.getTimetable(activeWorkspaceId, targetVersionId, {
           semesterType,
           section: selectedSection === 'All' ? undefined : selectedSection,
         }),
@@ -78,16 +100,40 @@ export default function HODTimetable({ workspaceId }: HODTimetableProps) {
 
   useEffect(() => {
     loadTimetableData(selectedVersionId);
-  }, [workspaceId, semesterType, selectedSection]);
+  }, [activeWorkspaceId, semesterType, selectedSection]);
 
   const handleGenerate = async () => {
     setGenerating(true);
     try {
-      const res = await timetableApi.generateTimetable(workspaceId);
-      toast.success(res.message || 'Demo timetable loaded successfully!');
+      const res = await timetableApi.generateTimetable(activeWorkspaceId);
+      if (IS_DEMO_MODE) {
+        toast.success(res.message || 'Demo timetable loaded successfully!');
+      } else {
+        toast.success(`Official draft version #${res.version_id} generated via KAIROS CP-SAT (${res.scheduled_sessions} sessions)!`);
+      }
       await loadTimetableData(res.version_id);
     } catch (e: any) {
-      toast.error(e?.message || 'Generation action failed');
+      const detail = e.response?.data?.detail;
+      const msg = typeof detail === 'object' && detail.message ? detail.message : (detail || e.message || 'Generation action failed');
+      toast.error(msg);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleKAIROSPreview = async () => {
+    setGenerating(true);
+    try {
+      const res = await timetableApi.generatePreview(activeWorkspaceId);
+      if (res.status === 'COMPLETED' && res.preview_entries) {
+        toast.success(`KAIROS solver generated provisional preview (${res.preview_entries.length} sessions)!`);
+      } else if (res.status === 'INFEASIBLE') {
+        toast.error("KAIROS: Schedule infeasible under current constraints.");
+      }
+    } catch (err: any) {
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === 'object' && detail.message ? detail.message : (detail || err.message || 'KAIROS Preview blocked.');
+      toast.error(msg);
     } finally {
       setGenerating(false);
     }
@@ -97,13 +143,65 @@ export default function HODTimetable({ workspaceId }: HODTimetableProps) {
     if (!selectedVersionId) return;
     setPublishing(true);
     try {
-      await timetableApi.publishVersion(selectedVersionId);
-      toast.success('Version published (Demo demonstration only — no backend write)');
+      const res = await timetableApi.publishVersion(selectedVersionId);
+      if (IS_DEMO_MODE) {
+        toast.success('Version published (Demo demonstration only — no backend write)');
+      } else {
+        toast.success(`Timetable version #${res.published_version_id || selectedVersionId} successfully published!`);
+      }
       await loadTimetableData(selectedVersionId);
     } catch (e: any) {
-      toast.error('Publish failed');
+      const detail = e.response?.data?.detail;
+      const msg = typeof detail === 'object' && detail.message ? detail.message : (detail || e.message || 'Publish failed');
+      toast.error(msg);
     } finally {
       setPublishing(false);
+    }
+  };
+
+  const handleExportPDF = () => {
+    if (!entries || entries.length === 0) {
+      toast.error('No timetable entries loaded to export.');
+      return;
+    }
+
+    const currentWs = availableWorkspaces.find((w: any) => w.workspace_id === activeWorkspaceId);
+    const dayNameMap: Record<number, string> = {
+      0: 'MONDAY',
+      1: 'TUESDAY',
+      2: 'WEDNESDAY',
+      3: 'THURSDAY',
+      4: 'FRIDAY',
+      5: 'SATURDAY',
+    };
+
+    const slots = entries.map(e => ({
+      day: dayNameMap[e.day_of_week] || 'MONDAY',
+      period: e.period_number,
+      course_code: e.course_code,
+      course_name: e.course_name,
+      course_short: e.course_code,
+      room: e.room_code || 'TBD',
+      faculty_name: e.faculty_name,
+      is_lab: e.room_code?.toLowerCase().includes('lab') || false,
+    }));
+
+    try {
+      exportTimetableToPdf({
+        institutionName: 'SRM INSTITUTE OF SCIENCE AND TECHNOLOGY',
+        departmentName: ctx?.departmentName || 'Department of Computer Science',
+        programmeName: currentWs?.programme_name || ctx?.programmeName || 'Academic Programme',
+        semester: currentWs?.semester || '1',
+        section: selectedSection,
+        academicYear: ctx?.academicYear || '2026-27',
+        room: entries[0]?.room_code || 'CR-200',
+        slots: slots,
+      });
+      toast.success('Timetable PDF downloaded successfully!');
+    } catch (err: any) {
+      console.error('PDF Export failed:', err);
+      toast.error('Failed to generate PDF. Falling back to print.');
+      window.print();
     }
   };
 
@@ -219,25 +317,43 @@ export default function HODTimetable({ workspaceId }: HODTimetableProps) {
               </span>
             </div>
             <p style={{ fontSize: '13px', color: '#64748B', marginTop: '4px', margin: 0 }}>
-              {ctx?.programmeName || 'Master of Computer Applications (MCA)'} · Academic Year{' '}
-              {ctx?.academicYear || '2026-27'} · {ctx?.departmentName}
+              {availableWorkspaces.find(w => w.workspace_id === activeWorkspaceId)?.programme_name || ctx?.programmeName || 'Academic Programme'} · Semester {availableWorkspaces.find(w => w.workspace_id === activeWorkspaceId)?.semester || ''} · Academic Year{' '}
+              {ctx?.academicYear || '2026-27'} · {ctx?.departmentName || 'Department'}
             </p>
           </div>
 
           {/* Action Buttons */}
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             <button
+              className="btn btn-secondary"
+              onClick={handleKAIROSPreview}
+              disabled={generating}
+              style={{
+                background: '#002147',
+                color: '#C9A84C',
+                border: '1px solid #C9A84C',
+                fontWeight: 800,
+                padding: '8px 16px',
+                cursor: 'pointer'
+              }}
+              title="Runs KAIROS constraint solver pipeline with provisional room preferences"
+            >
+              {generating ? 'Solving...' : '🔬 Run KAIROS Preview'}
+            </button>
+
+            <button
               className="btn btn-primary"
               onClick={handleGenerate}
               disabled={generating}
               style={{
-                background: '#002147',
-                borderColor: '#002147',
+                background: IS_DEMO_MODE ? '#334155' : '#047857',
+                borderColor: IS_DEMO_MODE ? '#334155' : '#047857',
                 fontWeight: 700,
                 padding: '8px 16px',
               }}
+              title={IS_DEMO_MODE ? "Load illustrative mock timetable" : "Generate official KAIROS CP-SAT draft timetable and persist to database"}
             >
-              {generating ? 'Simulating...' : '⚡ Load Demo Timetable'}
+              {generating ? 'Generating...' : (IS_DEMO_MODE ? '⚡ Load Demo Timetable' : '🚀 Generate Official Draft')}
             </button>
 
             {timetableMeta && (
@@ -252,9 +368,31 @@ export default function HODTimetable({ workspaceId }: HODTimetableProps) {
                   fontWeight: 700,
                   padding: '8px 16px',
                 }}
-                title="Illustrative client-only publish demo"
+                title={IS_DEMO_MODE ? "Illustrative client-only publish demo" : "Publish validated draft version across the institution"}
               >
-                {publishing ? 'Publishing...' : '✓ Demo Publish'}
+                {publishing ? 'Publishing...' : (IS_DEMO_MODE ? '✓ Demo Publish' : '✓ Publish Version')}
+              </button>
+            )}
+
+            {entries.length > 0 && (
+              <button
+                className="btn btn-secondary"
+                onClick={handleExportPDF}
+                style={{
+                  background: '#F1F5F9',
+                  color: '#002147',
+                  border: '1px solid #CBD5E1',
+                  fontWeight: 700,
+                  padding: '8px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  cursor: 'pointer'
+                }}
+                title="Download official weekly class schedule as a formatted PDF"
+              >
+                <span>📄</span>
+                <span>Export Timetable as PDF</span>
               </button>
             )}
           </div>
@@ -273,7 +411,7 @@ export default function HODTimetable({ workspaceId }: HODTimetableProps) {
             border: '1px solid #E2E8F0',
           }}
         >
-          {/* Semester Type Selector */}
+          {/* Term Selector */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '12px', fontWeight: 700, color: '#475569' }}>Term:</span>
             <div style={{ display: 'flex', gap: '4px' }}>
@@ -291,7 +429,7 @@ export default function HODTimetable({ workspaceId }: HODTimetableProps) {
                   cursor: 'pointer',
                 }}
               >
-                ODD (Sem 1)
+                ODD
               </button>
               <button
                 onClick={() => setSemesterType('EVEN')}
@@ -307,10 +445,43 @@ export default function HODTimetable({ workspaceId }: HODTimetableProps) {
                   cursor: 'pointer',
                 }}
               >
-                EVEN (Sem 2)
+                EVEN
               </button>
             </div>
           </div>
+
+          {/* Dynamic Semester Selector */}
+          {availableWorkspaces.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: '#475569' }}>Semester:</span>
+              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                {availableWorkspaces.map(ws => {
+                  const hasMultipleProgs = new Set(availableWorkspaces.map(w => w.programme_name)).size > 1;
+                  const progPrefix = hasMultipleProgs ? (ws.programme_name.includes('B.Sc') ? 'B.Sc' : (ws.programme_name.includes('M.Sc') ? 'M.Sc' : 'MCA')) : '';
+                  return (
+                    <button
+                      key={ws.workspace_id}
+                      onClick={() => setActiveWorkspaceId(ws.workspace_id)}
+                      style={{
+                        padding: '5px 12px',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        border: '1px solid',
+                        borderColor: activeWorkspaceId === ws.workspace_id ? '#C9A84C' : '#CBD5E1',
+                        background: activeWorkspaceId === ws.workspace_id ? '#002147' : 'white',
+                        color: activeWorkspaceId === ws.workspace_id ? '#C9A84C' : '#475569',
+                        cursor: 'pointer',
+                        boxShadow: activeWorkspaceId === ws.workspace_id ? '0 2px 6px rgba(0,33,71,0.2)' : 'none'
+                      }}
+                    >
+                      {progPrefix ? `${progPrefix} Sem ${ws.semester}` : `Semester ${ws.semester}`}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Section Filter */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -379,7 +550,7 @@ export default function HODTimetable({ workspaceId }: HODTimetableProps) {
           <div style={{ fontSize: '36px', marginBottom: '8px' }}>📅</div>
           <h3 style={{ fontSize: '16px', fontWeight: 700, color: '#0F172A' }}>No Timetable Available</h3>
           <p style={{ fontSize: '13px' }}>
-            Click "Load Demo Timetable" above to view the illustrative schedule.
+            Finalize workload allocations for this semester, then click "Generate Official Draft" above to solve and view the conflict-free timetable.
           </p>
         </div>
       ) : (

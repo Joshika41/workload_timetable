@@ -53,12 +53,18 @@ export default function FacultyTimetable() {
     const loadFacultySchedule = async () => {
       setLoading(true);
       try {
-        const data = await timetableApi.getTimetable('FLABS-MCA-SEM', undefined, { semesterType });
-        // Filter strictly from the shared canonical timetable dataset for this faculty member
-        const myEntries = (data.entries || []).filter((e) =>
-          e.faculty.toLowerCase().includes(selectedDemoFaculty.toLowerCase())
-        );
-        setEntries(myEntries);
+        if (IS_DEMO_MODE) {
+          const data = await timetableApi.getTimetable('FLABS-MCA-SEM', undefined, { semesterType });
+          // Filter strictly from the shared canonical timetable dataset for this faculty member
+          const myEntries = (data.entries || []).filter((e) =>
+            e.faculty.toLowerCase().includes(selectedDemoFaculty.toLowerCase())
+          );
+          setEntries(myEntries);
+        } else {
+          // LIVE MODE: Query real published timetable records from PostgreSQL for current authenticated faculty
+          const data = await timetableApi.getFacultySchedule(semesterType);
+          setEntries(data.entries || []);
+        }
       } catch (e) {
         toast.error('Failed to load faculty timetable');
       } finally {

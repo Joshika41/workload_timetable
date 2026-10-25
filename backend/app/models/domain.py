@@ -292,7 +292,7 @@ class SubjectAllocation(Base):
 class AllocationComponent(Base):
     __tablename__ = 'allocation_components'
     __table_args__ = (
-        UniqueConstraint('allocation_id', name='uq_allocation_components_alloc_id'),
+        UniqueConstraint('allocation_id', 'role', name='uq_allocation_components_alloc_role'),
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
     allocation_id = Column(Integer, ForeignKey('subject_allocations.id'), nullable=False)
